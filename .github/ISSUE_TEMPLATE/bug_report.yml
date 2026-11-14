@@ -1,0 +1,51 @@
+name: Bug report
+description: Something in the current prototype does not work as documented.
+title: "[bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting. ActRun is an early prototype, so please check the Status section of the README first:
+        a feature marked "In design" or "Planned" is not a bug.
+        For security vulnerabilities, follow SECURITY.md instead of opening a public issue.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: What you did, what you expected, and what you got instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Minimal reproduction
+      description: Code or commands that reproduce the problem.
+      render: shell
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - Python runtime
+        - Event recording (JSONL)
+        - Evaluation
+        - Rust trace engine
+        - Documentation
+        - Not sure
+    validations:
+      required: true
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: Python, Rust (if relevant), operating system, and the commit you are on.
+      placeholder: "Python 3.12, rustc 1.xx, Ubuntu 24.04, commit abc1234"
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or output
+      description: Remove secrets and private data first.
+      render: shell

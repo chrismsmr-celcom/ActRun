@@ -1,0 +1,71 @@
+name: Multi-agent failure report
+description: Tell us what broke when several agents shared state. This is the most useful kind of issue right now.
+title: "[failure] "
+labels: ["evidence"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ActRun is built around a bet: agents that share mutable state need real coordination primitives.
+        Concrete stories from real setups help us test that bet. You do not need to use ActRun to file this.
+  - type: textarea
+    id: goal
+    attributes:
+      label: What were your agents trying to do?
+      description: The task, in a few sentences.
+    validations:
+      required: true
+  - type: textarea
+    id: setup
+    attributes:
+      label: Your setup
+      description: Framework or tools, number of agents, how they were orchestrated.
+    validations:
+      required: true
+  - type: dropdown
+    id: shared
+    attributes:
+      label: What did the agents share?
+      options:
+        - Files or a code repository
+        - A database
+        - Documents or notes
+        - Tickets or an external API
+        - Something else
+    validations:
+      required: true
+  - type: checkboxes
+    id: symptoms
+    attributes:
+      label: What went wrong?
+      options:
+        - label: One agent overwrote another agent's work
+        - label: Agents duplicated work
+        - label: Agents deadlocked or waited on each other
+        - label: Agents looped
+        - label: I could not tell which agent changed what
+        - label: I could not reproduce or replay the run
+        - label: Something else
+  - type: textarea
+    id: details
+    attributes:
+      label: What happened?
+      description: Be as concrete as you can. A short timeline of events is ideal.
+    validations:
+      required: true
+  - type: textarea
+    id: workaround
+    attributes:
+      label: What did you do about it?
+      description: Workarounds, locks you wrote yourself, limits you set, or "nothing".
+  - type: textarea
+    id: wish
+    attributes:
+      label: What would you have wanted from a coordination layer?
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Before you submit
+      options:
+        - label: I removed secrets, credentials and private data from this report.
+          required: true
