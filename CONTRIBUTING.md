@@ -1,183 +1,132 @@
 # Contributing to ActRun
 
-Thank you for considering a contribution to ActRun.
+Thanks for your interest in ActRun. This is an early-stage project, so contributions of every size matter, and so does honest feedback.
 
-ActRun is an early-stage project. Contributions that improve correctness, clarity, tests, documentation, and the reliability of the existing implementation are especially valuable.
+## The most useful contribution right now
 
-This document explains how to contribute.
+**Evidence.** ActRun is a bet that agents sharing mutable state need real coordination primitives. We want to know whether that is true for you.
 
-## Project status
-
-ActRun is experimental software. Its public APIs, internal architecture, and event schema may change.
-
-Before starting substantial work, open an issue or discussion to explain the proposed change. This helps avoid duplicated effort and design decisions that conflict with the project's direction.
+If you run several agents against shared state, please open a [multi-agent failure report](https://github.com/chrismsmr-celcom/ActRun/issues/new?template=multi_agent_failure.yml). A concrete story ("two agents rewrote the same file", "a run deadlocked", "I could not tell who changed what") is worth more than a pull request at this stage.
 
 ## Ways to contribute
 
-You can contribute by:
+- **Report failures** you have hit with multi-agent systems.
+- **Challenge the design.** If part of the direction in the README looks wrong, open an issue and say so.
+- **Fix bugs and add tests.** The prototype is small and test coverage is thin.
+- **Improve the docs.** Anything unclear, outdated, or overclaiming is a good first contribution.
+- **Build features** from the [roadmap](README.md#roadmap), after discussing them first (see below).
 
-- Reporting reproducible bugs.
-- Improving tests.
-- Fixing implementation issues.
-- Improving documentation and examples.
-- Reviewing API design.
-- Improving the JSONL event contract.
-- Improving Rust trace processing.
-- Proposing model-provider integrations.
-- Identifying security and reliability weaknesses.
+Issues labeled `good first issue` are meant for newcomers.
 
-Small, focused contributions are preferred.
+## Before you write code
+
+For anything larger than a small fix, **open an issue first**. This applies in particular to:
+
+- a new public API or a change to an existing one,
+- any change to the event schema,
+- a new dependency,
+- a new component or language boundary (Python vs Rust).
+
+This avoids wasted work on a direction the project cannot accept.
 
 ## Development setup
 
-### Requirements
-
-- Python 3.10 or newer.
-- `pip`.
-- Rust and Cargo for Rust development.
-- Git.
-
-### Clone the repository
+Requirements: Python 3.10+, Git, and the Rust toolchain (stable) for the trace engine.
 
 ```bash
-git clone https://github.com/OWNER/ActRun.git
+git clone https://github.com/chrismsmr-celcom/ActRun.git
 cd ActRun
-```
 
-### Set up Python
-
-```bash
+# Python
 cd python
 python -m pip install -e ".[dev]"
-```
-
-Run the Python tests:
-
-```bash
 pytest
-```
 
-Run Ruff:
-
-```bash
-ruff check .
-```
-
-### Set up Rust
-
-From the repository root:
-
-```bash
-cd rust/trace-engine
+# Rust
+cd ../rust/trace-engine
 cargo test
 ```
 
-Run the trace engine against the example log:
+## Project layout
+
+```
+ActRun/
+├── python/                  Python runtime and evaluation (package: agent_harness)
+│   ├── src/agent_harness/
+│   └── tests/
+├── rust/trace-engine/       Rust trace engine (reads JSONL events)
+├── example-trace.jsonl      Sample event log used by the Rust engine
+├── README.md
+├── CONTRIBUTING.md
+└── SECURITY.md
+```
+
+The Python package is still named `open-agent-harness` and will be renamed to `actrun`. Please do not rely on the current import name in new documentation.
+
+## Checks
+
+CI runs the same commands. Please run them locally before opening a pull request.
 
 ```bash
-cargo run -- ../../example-trace.jsonl
+# Python (from python/)
+pytest
+
+# Rust (from rust/trace-engine/)
+cargo fmt --check
+cargo clippy --all-targets
+cargo test
 ```
 
-## Contribution guidelines
+Run `cargo fmt` to fix formatting automatically.
 
-### 1. Keep changes focused
+## Coding guidelines
 
-A pull request should solve one clearly described problem.
+**General**
 
-Avoid combining unrelated refactors, formatting changes, new features, and documentation rewrites in one pull request.
+- Keep the core small. A new dependency needs a justification in the pull request.
+- Every behavior change comes with a test. Every bug fix comes with a regression test.
+- Keep the core provider-neutral: no model-vendor-specific code in the runtime.
 
-### 2. Add or update tests
+**Python**
 
-Changes to runtime behavior should include tests.
+- Python 3.10+ compatible.
+- Type hints on all public functions and classes.
+- The runtime is async-first.
 
-Changes to event processing should include tests for valid input and relevant failure cases.
+**Rust**
 
-Do not claim that a behavior is tested unless a test actually covers it.
+- Stable toolchain. Code must pass `cargo fmt` and should be free of `clippy` warnings.
+- Avoid `unsafe`. If you need it, explain why in a comment and in the pull request.
 
-### 3. Preserve the architecture
+## Event schema changes
 
-The current architectural separation is intentional:
+Events are written to JSONL and read by the Rust engine, so the event format is a versioned contract. A change to it must:
 
-- Python owns model interaction, agent execution, and basic evaluation.
-- Rust processes recorded execution traces.
-- JSONL is the current exchange format between runtime output and trace processing.
+1. bump `schema_version`,
+2. update `example-trace.jsonl`,
+3. update the Rust trace engine and its tests,
+4. be described in the pull request, including whether old logs remain readable.
 
-Do not introduce a second agent runtime in Rust without first discussing the architectural trade-offs.
+## Documentation must not overclaim
 
-### 4. Document limitations
+ActRun's README separates what exists from what is planned. Keep it that way. Do not describe a planned feature as implemented, and mark design sketches as sketches. Contributions that blur this line will be asked to change.
 
-If a feature has limitations, document them.
+## Commits and pull requests
 
-In particular, do not describe the current runtime as a sandbox or claim that tool arguments are schema-validated by the runtime.
+- One logical change per pull request. Small pull requests are reviewed faster.
+- Write commit messages in the imperative mood ("Add lease timeout"), and reference the related issue.
+- Fill in the pull request template.
+- This is a small project: reviews may take a few days.
 
-### 5. Avoid unnecessary dependencies
+## Security and data
 
-New dependencies should have a clear technical justification.
-
-Prefer the standard library when it is sufficient. Explain the maintenance, security, and performance implications of new dependencies.
-
-## Pull request process
-
-Before opening a pull request:
-
-1. Make sure the change has a clear purpose.
-2. Add or update relevant tests.
-3. Run the Python tests if Python code changed.
-4. Run Ruff if Python code changed.
-5. Run Rust tests if Rust code changed.
-6. Update documentation where necessary.
-7. Review the diff for unrelated changes or accidentally committed secrets.
-
-A pull request should include:
-
-- A short description of the problem.
-- What changed.
-- Why the change is needed.
-- Tests performed.
-- Known limitations or follow-up work.
-
-## Commit messages
-
-Use concise, descriptive commit messages.
-
-Examples:
-
-```text
-fix(runtime): handle unknown tool calls
-test(runtime): cover tool timeout behavior
-docs: clarify evaluation limitations
-feat(trace): report tool denial counts
-```
-
-These prefixes are conventions, not a requirement for every contribution.
-
-## Reporting bugs
-
-When reporting a bug, include:
-
-- Python or Rust version, as applicable.
-- Operating system.
-- Steps to reproduce.
-- Expected behavior.
-- Actual behavior.
-- Relevant error messages.
-- A minimal example when possible.
-
-Remove API keys, tokens, personal data, and confidential application information before sharing logs.
-
-## Security issues
-
-Do not report exploitable vulnerabilities in public issues.
-
-Follow the private reporting guidance in [SECURITY.md](SECURITY.md).
-
-## Code of conduct
-
-Be respectful, constructive, and specific.
-
-Technical disagreement is welcome. Personal attacks, harassment, discriminatory behavior, and deliberate disruption are not.
+- Never commit secrets, credentials, or real user data. This includes event logs and test fixtures.
+- Report security vulnerabilities as described in [SECURITY.md](SECURITY.md), not in public issues.
 
 ## License
 
-By submitting a contribution, you agree that your contribution will be distributed under the project's MIT License.
+By contributing, you agree that your contribution is licensed under the [MIT License](LICENSE).
 
+## Code of conduct
+
+Participation in this project is governed by the [Code of Conduct](CODE_OF_CONDUCT.md).
