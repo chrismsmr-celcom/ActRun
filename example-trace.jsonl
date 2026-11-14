@@ -1,0 +1,12 @@
+{"event_id":"00000000-0000-0000-0000-000000000001","timestamp":"2026-11-15T10:00:00+00:00","agent_id":"agent_marketing","action":"workspace.branch","payload":{"branch_name":"setup-marketing","base_version":"v0"}}
+{"event_id":"00000000-0000-0000-0000-000000000002","timestamp":"2026-11-15T10:00:01+00:00","agent_id":"agent_logistique","action":"workspace.branch","payload":{"branch_name":"setup-logistique","base_version":"v0"}}
+{"event_id":"00000000-0000-0000-0000-000000000003","timestamp":"2026-11-15T10:00:02+00:00","agent_id":"agent_marketing","action":"lease.acquire","payload":{"resource_key":"budget","duration_seconds":5.0}}
+{"event_id":"00000000-0000-0000-0000-000000000004","timestamp":"2026-11-15T10:00:03+00:00","agent_id":"agent_logistique","action":"lease.acquire","payload":{"resource_key":"lieu","duration_seconds":5.0}}
+{"event_id":"00000000-0000-0000-0000-000000000005","timestamp":"2026-11-15T10:00:04+00:00","agent_id":"agent_marketing","action":"workspace.commit","payload":{"version_id":"v1","merge_type":"fast-forward"}}
+{"event_id":"00000000-0000-0000-0000-000000000006","timestamp":"2026-11-15T10:00:05+00:00","agent_id":"agent_logistique","action":"workspace.commit","payload":{"version_id":"v2","merge_type":"auto-merge"}}
+{"event_id":"00000000-0000-0000-0000-000000000007","timestamp":"2026-11-15T10:00:06+00:00","agent_id":"agent_marketing","action":"lease.release","payload":{"resource_key":"budget"}}
+{"event_id":"00000000-0000-0000-0000-000000000008","timestamp":"2026-11-15T10:00:07+00:00","agent_id":"agent_logistique","action":"lease.release","payload":{"resource_key":"lieu"}}
+{"event_id":"00000000-0000-0000-0000-000000000009","timestamp":"2026-11-15T10:00:08+00:00","agent_id":"agent_marketing","action":"workspace.branch","payload":{"branch_name":"change-venue-m","base_version":"v2"}}
+{"event_id":"00000000-0000-0000-0000-000000000010","timestamp":"2026-11-15T10:00:09+00:00","agent_id":"agent_logistique","action":"workspace.branch","payload":{"branch_name":"change-venue-l","base_version":"v2"}}
+{"event_id":"00000000-0000-0000-0000-000000000011","timestamp":"2026-11-15T10:00:10+00:00","agent_id":"agent_marketing","action":"workspace.commit","payload":{"version_id":"v3","conflict":false}}
+{"event_id":"00000000-0000-0000-0000-000000000012","timestamp":"2026-11-15T10:00:11+00:00","agent_id":"agent_logistique","action":"workspace.commit","payload":{"version_id":"v4","conflict":true,"conflicting_keys":["lieu"]}}
