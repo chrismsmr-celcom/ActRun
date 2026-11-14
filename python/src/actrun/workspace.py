@@ -1,9 +1,10 @@
 # python/src/actrun/workspace.py
 import copy
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Dict, Any, Optional, List
 from .events import ActRunEvent
+from .merge import detect_and_merge, MergeResult, ConflictError
 
 @dataclass(frozen=True)
 class Snapshot:
@@ -29,24 +30,12 @@ class Branch:
         self.current_data.pop(key, None)
 
 class Workspace:
-    """
-    Le gestionnaire central du workspace partagé.
-    Maintient l'historique des snapshots et permet la création de branches.
-    """
+    """Le gestionnaire central du workspace partagé."""
     def __init__(self):
-        # Historique immuable de tous les snapshots
         self._snapshots: Dict[str, Snapshot] = {}
-        
-        # Snapshot initial (état vide)
-        initial_snapshot = Snapshot(
-            version_id=str(uuid.uuid4()),
-            data={},
-            parent_version=None
-        )
+        initial_snapshot = Snapshot(version_id=str(uuid.uuid4()), data={}, parent_version=None)
         self._snapshots[initial_snapshot.version_id] = initial_snapshot
         self._head_version = initial_snapshot.version_id
-        
-        # Journal des événements (optionnel, pour traçabilité)
         self._events: List[ActRunEvent] = []
 
     @property
@@ -54,44 +43,54 @@ class Workspace:
         return self._snapshots[self._head_version]
 
     def create_branch(self, agent_id: str, branch_name: str) -> Branch:
-        """Crée une nouvelle branche à partir de l'état actuel (HEAD)."""
         branch = Branch(name=branch_name, base_snapshot=self.head)
-        
-        # Enregistrer l'événement
-        event = ActRunEvent(
-            agent_id=agent_id,
-            action="workspace.branch",
-            payload={
-                "branch_name": branch_name,
-                "base_version": self._head_version
-            }
-        )
-        self._events.append(event)
+        self._events.append(ActRunEvent(
+            agent_id=agent_id, action="workspace.branch",
+            payload={"branch_name": branch_name, "base_version": self._head_version}
+        ))
         return branch
 
     def commit(self, agent_id: str, branch: Branch) -> Snapshot:
         """
-        Valide les modifications d'une branche comme un nouveau snapshot officiel.
-        Met à jour HEAD.
+        Tente de valider les modifications. 
+        Lève une ConflictError si des clés ont été modifiées en parallèle.
         """
+        # 1. Récupérer l'état de base sur lequel la branche a travaillé
+        base_snapshot = self._snapshots[branch.base_version]
+        
+        # 2. Analyser les conflits
+        merge_result = detect_and_merge(
+            base_data=base_snapshot.data,
+            branch_data=branch.current_data,
+            current_head_data=self.head.data
+        )
+        
+        if not merge_result.success:
+            # Échec : on lève une exception avec les détails
+            raise ConflictError(
+                f"Conflit détecté lors du commit de l'agent {agent_id}. "
+                f"Les clés suivantes ont été modifiées simultanément : {merge_result.conflicting_keys}",
+                conflicting_keys=merge_result.conflicting_keys
+            )
+        
+        # 3. Succès : on crée le nouveau snapshot avec les données fusionnées
         new_snapshot = Snapshot(
             version_id=str(uuid.uuid4()),
-            data=copy.deepcopy(branch.current_data),
+            data=merge_result.merged_data,
             parent_version=self._head_version
         )
         self._snapshots[new_snapshot.version_id] = new_snapshot
         self._head_version = new_snapshot.version_id
         
-        event = ActRunEvent(
-            agent_id=agent_id,
-            action="workspace.commit",
+        self._events.append(ActRunEvent(
+            agent_id=agent_id, action="workspace.commit",
             payload={
                 "version_id": new_snapshot.version_id,
                 "parent_version": new_snapshot.parent_version,
+                "merge_type": "auto-merge" if merge_result.merged_data != branch.current_data else "fast-forward",
                 "keys_modified": list(branch.current_data.keys())
             }
-        )
-        self._events.append(event)
+        ))
         return new_snapshot
 
     def get_events(self) -> List[ActRunEvent]:
