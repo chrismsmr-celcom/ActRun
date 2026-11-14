@@ -154,5 +154,7 @@ def export_trace():
     print(f"\n💾 Trace exportée dans : {output_path}")
     print(f"   Analyse avec : cargo run --release -- {output_path}")
     
+    export_trace()
+    
 if __name__ == "__main__":
     main()
