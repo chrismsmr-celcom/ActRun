@@ -145,6 +145,14 @@ def main():
     print("  ✅ Avoir une traçabilité complète (journal immuable)")
     print("\n" + "=" * 70 + "\n")
 
-
+def export_trace():
+    """Exporte le journal au format JSONL pour analyse par actrun-trace"""
+    output_path = os.path.join(os.path.dirname(__file__), "trace.jsonl")
+    with open(output_path, "w", encoding="utf-8") as f:
+        for event in ws.get_events():
+            f.write(event.to_jsonl() + "\n")
+    print(f"\n💾 Trace exportée dans : {output_path}")
+    print(f"   Analyse avec : cargo run --release -- {output_path}")
+    
 if __name__ == "__main__":
     main()
