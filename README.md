@@ -1,407 +1,187 @@
+<div align="center">
+
 # ActRun
 
-**A lightweight, open-source runtime and evaluation foundation for AI agents.**
+**Shared state and coordination for multi-agent systems.**
 
-ActRun is a Python and Rust project for running tool-using AI agents, recording their execution as structured events, and inspecting those execution traces.
+Versioned workspaces, conflict resolution and replayable audit logs, so your agents stop overwriting each other.
 
-The goal is to make agent execution easier to understand, test, and evaluate — without tying the project to a specific model provider.
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Status: early development](https://img.shields.io/badge/status-early%20development-orange.svg)](#status)
+[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-3776AB.svg)](python/)
+[![Rust](https://img.shields.io/badge/core-Rust-000000.svg)](rust/)
 
-> **Project status: Early development**
->
-> ActRun is an experimental prototype. Its APIs and event format may change. It is not yet intended for production workloads or untrusted tool execution.
+</div>
 
-## Why ActRun?
+> **Early development.** ActRun is an experimental prototype. The vision below is a design direction, not a feature list. The [Status](#status) section says exactly what works today and what does not. APIs and the event format will change.
 
-AI agents do more than generate text. They can call tools, interact with external systems, and perform multi-step tasks.
+---
 
-Building reliable agents requires more than connecting a model to a set of tools. Developers also need a way to:
+## The problem
 
-- Control the execution loop.
-- Restrict which tools an agent can invoke.
-- Set basic execution limits.
-- Record what happened during a run.
-- Inspect execution traces.
-- Evaluate whether an agent produced an expected result.
+One agent writing to a codebase, a database or a document works fine. Put three of them on the same task and things start to break:
 
-ActRun is being built as a small, understandable foundation for these tasks.
+- Two agents edit the same file and one silently erases the other's work.
+- Agents duplicate effort, loop, or wait on each other forever.
+- Something goes wrong and nobody can say **which agent changed what, when, and why**.
+- You cannot replay a failed run to understand it.
 
-## What ActRun does today
+Agent frameworks help you *define* agents and workflows. Very little exists for what happens when several agents **share mutable state**. That is the gap ActRun explores.
 
-| Component | Current capability |
-|---|---|
-| Python runtime | Runs an asynchronous model/tool-calling loop |
-| Tool registry | Exposes registered tools to the model |
-| Tool restrictions | Rejects calls to tools that are not registered |
-| Execution limits | Supports a maximum number of model steps and per-tool timeouts |
-| Event recording | Writes structured execution events to JSONL |
-| Basic evaluation | Compares actual output with an expected output |
-| Rust trace engine | Reads JSONL events and aggregates basic execution metrics |
+## What ActRun is
 
-These capabilities are intentionally limited. The project will grow through tested, incremental additions.
+ActRun is a small, framework-agnostic coordination layer. It sits between your agents and the state they share, and it gives that state the guarantees we expect from any other concurrent system:
 
-## What ActRun is not
+| Idea | What it means |
+| --- | --- |
+| **Versioned shared workspace** | Every agent works on its own branch of the shared state, with snapshots you can inspect and roll back. |
+| **Conflict detection and resolution** | Concurrent edits are detected, never silently overwritten. Merge strategies are pluggable, with a hook for an arbiter (a rule, a human, or another agent). |
+| **Leases and deadlock detection** | Agents can claim a resource for a bounded time. Circular waits are detected instead of hanging. |
+| **Append-only event log** | Every action is recorded as a structured event. The log is the source of truth, so audit and replay come for free. |
+| **Coordination metrics** | Measure what actually goes wrong: conflicts, duplicated work, loops, coordination overhead. |
 
-ActRun does not currently provide:
+ActRun is designed to sit **alongside** your existing agent framework, not replace it.
 
-- A production-grade security sandbox.
-- Container or process isolation for tools.
-- Credential isolation or network egress enforcement.
-- Built-in integrations with OpenAI, Anthropic, or other model providers.
-- A complete benchmark or dataset management system.
-- Deterministic trace replay.
-- A graphical dashboard.
-- Distributed execution or persistent run storage.
-- A guarantee that an agent's output is correct or safe.
+## Status
 
-These are not implemented features and should not be assumed to exist.
+| Area | State |
+| --- | --- |
+| Async Python runtime (model/tool loop, tool registry, step limits, per-tool timeouts) | **Available (prototype)** |
+| Structured JSONL event recording | **Available (prototype)** |
+| Exact-match evaluation | **Available (prototype)** |
+| Rust trace engine (aggregates metrics from JSONL events) | **Available (prototype)** |
+| Shared workspace, branching, snapshots | In design |
+| Conflict detection and merge strategies | In design |
+| Leases and deadlock detection | Planned |
+| Deterministic replay | Planned |
+| MCP server and framework integrations | Planned |
+| Coordination benchmark | Planned |
 
-## Architecture
+The prototype in this repository is the foundation: a runtime that records what agents do, and tooling that reads those records. The coordination layer is being built on top of it.
 
-ActRun uses Python for agent execution and Rust for trace processing.
+## Architecture (design direction)
 
-```text
-                    Application
-                         |
-                         v
-                 Python AgentRuntime
-                         |
-                +--------+--------+
-                |                 |
-                v                 v
-             Model API        Tool Registry
-                |                 |
-                +--------+--------+
-                         |
-                         v
-                  Runtime Events
-                         |
-                         v
-                   JSONL Event Log
-                         |
-                         v
-                  Rust Trace Engine
-                         |
-                         v
-                 Aggregated Metrics
+```mermaid
+flowchart LR
+    subgraph Agents
+        A1["Agent A"]
+        A2["Agent B"]
+        A3["Agent C"]
+    end
+    A1 --> API
+    A2 --> API
+    A3 --> API
+    API["Python SDK / MCP server"] --> CORE
+    subgraph CORE["ActRun core (Rust)"]
+        WS["Versioned workspace"]
+        CR["Conflict resolution"]
+        LE["Leases and deadlock detection"]
+        LOG[("Append-only event log")]
+    end
+    WS --> LOG
+    CR --> LOG
+    LE --> LOG
+    LOG --> REPLAY["Replay and audit"]
+    LOG --> METRICS["Coordination metrics"]
 ```
 
-The two languages have separate responsibilities:
+Principles:
 
-### Python — Runtime and evaluation
+- **Event-sourced.** The log is the source of truth. Workspace state is derived from it.
+- **Framework-agnostic.** No dependency on a specific agent framework or model provider.
+- **Small core.** Prefer a few well-tested primitives over a large abstraction surface.
+- **Honest measurement.** Distinguish what is measured from what is assumed.
 
-The Python package currently contains:
+## API sketch
 
-- `models.py`: model protocol and response data structures.
-- `runtime.py`: asynchronous execution loop and tool invocation.
-- `events.py`: JSONL event recording.
-- `evaluation.py`: basic exact-match evaluation.
+> **Design sketch only. This API does not exist yet.** It is shown to make the direction concrete and to invite feedback.
 
-Python owns agent execution. Rust does not run a second agent runtime.
+```python
+from actrun import Workspace, merge
 
-### Rust — Trace processing
+ws = Workspace.open("./runs/feature-x")
 
-The Rust component reads the JSONL event log and calculates basic metrics, including:
+# Each agent works on its own branch of the shared state.
+agent_a = ws.branch("agent-a")
+agent_b = ws.branch("agent-b")
 
-- Total number of events.
-- Number of distinct runs.
-- Event counts by type.
-- Tool failures.
-- Tool denials.
-- Completed runs.
-- Failed runs.
+agent_a.write("spec/auth.md", draft_a)
+agent_b.write("spec/auth.md", draft_b)
 
-The Rust component currently operates as a standalone command-line program.
+# Concurrent edits to the same path are detected, not silently overwritten.
+result = ws.merge(
+    [agent_a, agent_b],
+    strategy=merge.three_way(fallback="arbiter"),
+)
 
-## Getting started
+for conflict in result.conflicts:
+    print(conflict.path, conflict.branches)
 
-### Requirements
+# Claim a resource for a bounded time.
+with ws.lease("db/schema.sql", holder="agent-a", ttl_seconds=60):
+    ...
+```
 
-- Python 3.10 or newer.
-- Rust toolchain and Cargo, if you want to use the trace engine.
-- Git.
+## Try what exists today
 
-### Clone the repository
+Requirements: Python 3.10+, Git, and the Rust toolchain if you want the trace engine.
 
 ```bash
-git clone https://github.com/OWNER/ActRun.git
+git clone https://github.com/chrismsmr-celcom/ActRun.git
 cd ActRun
-```
 
-Replace `OWNER` with the GitHub account or organization hosting the repository.
-
-### Install the Python package
-
-```bash
+# Python runtime and tests
 cd python
 python -m pip install -e ".[dev]"
-```
-
-### Run the tests
-
-```bash
 pytest
-```
 
-## Python example
-
-ActRun currently defines a provider-neutral `Model` protocol. You must implement that protocol for your chosen model provider.
-
-The following example uses a small fake model. It demonstrates the current runtime API without requiring an API key or an external model provider.
-
-```python
-import asyncio
-
-from agent_harness import AgentRuntime, ModelResponse, Tool, ToolCall
-from agent_harness.events import JsonlEventSink
-
-
-class ExampleModel:
-    def __init__(self):
-        self.calls = 0
-
-    async def complete(self, messages, tool_specs):
-        self.calls += 1
-
-        if self.calls == 1:
-            return ModelResponse(
-                tool_calls=[
-                    ToolCall(
-                        name="add",
-                        arguments={"a": 2, "b": 3},
-                    )
-                ]
-            )
-
-        return ModelResponse(content="The result is 5.")
-
-
-def add(a: int, b: int) -> int:
-    return a + b
-
-
-async def main():
-    model = ExampleModel()
-
-    runtime = AgentRuntime(
-        model=model,
-        tools=[
-            Tool(
-                name="add",
-                description="Add two numbers.",
-                function=add,
-            )
-        ],
-        event_sink=JsonlEventSink("runs.jsonl"),
-        max_steps=5,
-    )
-
-    result = await runtime.run("What is 2 + 3?")
-
-    print("Status:", result.status)
-    print("Output:", result.output)
-    print("Run ID:", result.run_id)
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
-```
-
-The example demonstrates:
-
-1. Implementing the `Model` protocol.
-2. Registering a tool.
-3. Running an agent task.
-4. Recording runtime events.
-5. Reading the final `RunResult`.
-
-The example model is a test implementation, not a production model adapter.
-
-## Tool registration
-
-Tools are registered when the runtime is created.
-
-```python
-from agent_harness import AgentRuntime, Tool
-
-runtime = AgentRuntime(
-    model=my_model,
-    tools=[
-        Tool(
-            name="search",
-            description="Search a data source.",
-            function=search_function,
-            parameters={
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string"}
-                },
-                "required": ["query"],
-            },
-            timeout_seconds=5,
-        )
-    ],
-    max_steps=8,
-)
-```
-
-The `parameters` field is passed to the model implementation as part of the tool specification. The current runtime does not independently validate arguments against this schema.
-
-Only registered tool names can be invoked. Calls to unknown tools are denied and recorded as `tool.denied` events.
-
-## Execution events
-
-ActRun records events in JSON Lines format.
-
-Each event currently contains:
-
-```json
-{
-  "schema_version": "1",
-  "event_id": "unique-event-id",
-  "timestamp_unix_ms": 1730000000000,
-  "run_id": "unique-run-id",
-  "type": "run.started",
-  "payload": {
-    "task": "Example task"
-  }
-}
-```
-
-Current event types include:
-
-- `run.started`
-- `run.completed`
-- `run.failed`
-- `run.stopped`
-- `tool.started`
-- `tool.completed`
-- `tool.failed`
-- `tool.denied`
-
-The event format is an early versioned contract. It may evolve as the project develops.
-
-**Data handling:** event payloads may contain task text, tool arguments, or other application data. Do not write secrets, credentials, personal data, or sensitive production information to event logs unless you have implemented appropriate redaction and access controls.
-
-## Basic evaluation
-
-ActRun currently provides an exact-match evaluator.
-
-```python
-from agent_harness.evaluation import EvalCase, evaluate_exact_match
-
-cases = [
-    EvalCase(
-        case_id="addition-001",
-        task="What is 2 + 3?",
-        expected_output="5",
-    )
-]
-
-results = await evaluate_exact_match(runtime, cases)
-
-for result in results:
-    print(result.case_id, result.passed, result.status)
-```
-
-The evaluator runs each case through the runtime and compares the returned output with the expected output.
-
-By default, comparison uses `str.strip()` to remove leading and trailing whitespace.
-
-This is a basic correctness check, not a comprehensive evaluation framework. It does not currently support semantic grading, LLM-as-a-judge, benchmark reporting, statistical analysis, or dataset versioning.
-
-## Rust trace engine
-
-The Rust component processes an existing JSONL event file.
-
-From the repository root:
-
-```bash
-cd rust/trace-engine
+# Rust trace engine
+cd ../rust/trace-engine
 cargo test
 cargo run -- ../../example-trace.jsonl
 ```
 
-The command prints aggregated metrics as JSON.
+The Python runtime currently ships as `open-agent-harness` and imports as `agent_harness`. It will be renamed to `actrun` ([roadmap](#roadmap)).
 
-The current trace engine validates that events can be deserialized and that `schema_version` is supported. It does not yet perform full semantic validation of event sequences.
+Event payloads may contain task text, tool arguments or other application data. Do not write secrets or sensitive production data to event logs without your own redaction and access controls.
 
-## Project structure
+## What ActRun is not
 
-```text
-ActRun/
-├── README.md
-├── CONTRIBUTING.md
-├── LICENSE
-├── SECURITY.md
-├── example-trace.jsonl
-│
-├── python/
-│   ├── pyproject.toml
-│   ├── src/
-│   │   └── agent_harness/
-│   │       ├── __init__.py
-│   │       ├── models.py
-│   │       ├── runtime.py
-│   │       ├── events.py
-│   │       └── evaluation.py
-│   └── tests/
-│       └── test_runtime.py
-│
-└── rust/
-    └── trace-engine/
-        ├── Cargo.toml
-        └── src/
-            └── main.rs
-```
+- **Not an agent framework.** It does not define your agents or workflows.
+- **Not a model provider or a model adapter collection.**
+- **Not a security boundary.** Registered tools run with the permissions of the host process. Do not use it to execute untrusted code.
+- **Not a hosted service.** It is a library and a set of tools you run yourself.
 
-The current Python distribution is named `open-agent-harness`, and its import namespace is `agent_harness`. The project branding is ActRun; package and import names have not yet been migrated.
+## Why Rust and Python
 
-## Design principles
-
-ActRun is being developed around a few principles:
-
-- **Provider neutrality:** the runtime should not depend on one model vendor.
-- **Clear responsibilities:** Python executes agents; Rust processes traces.
-- **Observable execution:** important runtime events should be recordable.
-- **Small core:** prefer understandable components over unnecessary abstraction.
-- **Incremental reliability:** add capabilities with tests and documented limitations.
-- **Honest evaluation:** distinguish measured results from assumptions.
+Agents live in Python, so the SDK is Python. The parts where correctness and throughput matter most, concurrency semantics and log processing, belong in a memory-safe systems language. Rust enters the core only where it earns its place: until a component is measured, the Python implementation stays the reference.
 
 ## Roadmap
 
-The following items are planned, not currently implemented.
+Milestones are ordered, not dated.
 
-- [ ] Stabilize the Python public API.
-- [ ] Define and document the JSONL event schema.
-- [ ] Add model-provider adapters.
-- [ ] Improve tool argument validation.
-- [ ] Add structured evaluation reports.
-- [ ] Add benchmark dataset support.
-- [ ] Add trace replay.
-- [ ] Improve error handling and cancellation behavior.
-- [ ] Add stronger runtime and security tests.
-- [ ] Evaluate Python/Rust integration based on measured performance.
-- [ ] Add CI workflows and release automation.
+- [ ] **M0 Foundations**: CI, rename the package to `actrun`, specify the event schema, stabilize the public Python API.
+- [ ] **M1 Shared workspace**: Rust core with event log and workspace, branches and snapshots, optimistic concurrency, Python bindings.
+- [ ] **M2 Conflicts and leases**: merge strategies, arbiter hooks, leases, deadlock detection.
+- [ ] **M3 Observability**: deterministic replay, coordination metrics, a CLI trace viewer.
+- [ ] **M4 Integrations**: MCP server, examples for common agent frameworks, a coordination benchmark.
 
-Roadmap items may change based on testing and community feedback.
+Items may change based on testing and feedback.
+
+## Help shape it
+
+The most valuable contribution right now is **evidence**. If you run several agents against shared state, we want to hear what actually breaks for you:
+
+- Open an issue describing a concrete failure: two agents clobbering each other, a deadlock, a run you could not reproduce.
+- Tell us which primitives you would trust and which you would not.
+- Challenge the design. If a piece of the sketch above is wrong, say so.
+
+Code contributions are welcome too. Please read [CONTRIBUTING.md](CONTRIBUTING.md) first.
 
 ## Security
 
-ActRun is experimental software and is not a security boundary.
-
-The current runtime does not isolate tool execution from the host process. A registered Python function executes with the permissions of the process running ActRun.
-
-Do not use the current prototype to execute untrusted code or expose sensitive production systems.
-
-Please read [SECURITY.md](SECURITY.md) before reporting a vulnerability or using ActRun in a sensitive environment.
-
-## Contributing
-
-Contributions, bug reports, tests, and design discussions are welcome.
-
-Please read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request.
+ActRun is experimental software. Please read [SECURITY.md](SECURITY.md) before reporting a vulnerability or using it in a sensitive environment.
 
 ## License
 
-ActRun is distributed under the MIT License. See [LICENSE](LICENSE).
-
+MIT. See [LICENSE](LICENSE).
