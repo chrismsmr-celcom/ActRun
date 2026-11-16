@@ -208,7 +208,7 @@ The Rust crate is named `actrun-trace`:
 cargo run -p actrun-trace -- example-trace.jsonl
 ```
 
-The Python event model, JSON Schema, sample JSONL log, and Rust parser now use the same `1.0.0` envelope. The Python reader and Rust parser also accept legacy records that omit `schema_version`, treating them as `1.0.0`. New events always serialize the version field. The analyzer remains an early prototype; run it against your own exported logs before depending on its metrics.
+The Python event model, JSON Schema, sample JSONL log, and Rust parser now use the same `1.0.0` envelope. The Python reader and Rust parser also accept legacy records that omit `schema_version`, treating them as `1.0.0`. New events always serialize the version field. The current conflict metric is calculated as conflict events divided by successful plus aborted commit attempts. The analyzer remains an early prototype; run it against your own exported logs before depending on its metrics.
 
 ## MCP server (experimental)
 
