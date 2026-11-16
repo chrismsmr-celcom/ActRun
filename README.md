@@ -1,5 +1,7 @@
 <div align="center">
+    
 <img src="docs/cohort logo.png" alt="Cohort" width="120" />
+
 # cerbere-cohort
 
 **Shared state and conflict-aware coordination for multi-agent systems.**
