@@ -45,4 +45,4 @@ jobs:
       - name: Test
         run: cargo test
       - name: Run on the example trace
-        run: cargo run -p actrun-trace -- example-trace.jsonl
+        run: cargo run -p cerbere-cohort-trace -- example-trace.jsonl
