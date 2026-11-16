@@ -53,7 +53,7 @@ cargo test
 ```
 cerbere-cohort/
 ├── python/
-│   ├── src/cerbere-cohort/          Library: workspace, merge, leases, deadlock, persistence, events
+│   ├── src/cerbere_cohort/          Library: workspace, merge, leases, deadlock, persistence, events
 │   └── tests/               pytest suite
 ├── crates/cerbere-cohort-trace/     Rust trace analyzer (reads JSONL events)
 ├── schemas/                 Event schema (draft)
@@ -110,7 +110,7 @@ Events are written to JSONL and read by the Rust analyzer, so the event format i
 1. update `schemas/event.v1.schema.json`,
 2. update `example-trace.jsonl`,
 3. update the Python event emitters and the Rust analyzer, with tests,
-4. bump `schema_version` once that field exists (it is planned for milestone M1),
+4. bump `schema_version` when introducing an incompatible event-format change, and document the compatibility impact,
 5. be described in the pull request, including whether old logs remain readable.
 
 ## Documentation must not overclaim
