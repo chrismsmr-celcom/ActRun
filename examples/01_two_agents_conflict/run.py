@@ -1,5 +1,5 @@
 """
-ActRun - Exemple 01 : Deux agents, un conflit
+Cerbere Cohort - Exemple 01 : Deux agents, un conflit
 =============================================
 
 Scénario : Agent Marketing et Agent Logistique collaborent pour un événement.
@@ -7,12 +7,12 @@ Scénario : Agent Marketing et Agent Logistique collaborent pour un événement.
 import sys
 import os
 
-# Ajouter le chemin pour importer actrun depuis le package local
+# Ajouter le chemin pour importer cerbere_cohort depuis le package local
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../python/src'))
 
-from actrun.workspace import Workspace
-from actrun.merge import ConflictError
-from actrun.lease import LeaseError
+from cerbere_cohort.workspace import Workspace
+from cerbere_cohort.merge import ConflictError
+from cerbere_cohort.lease import LeaseError
 
 
 def print_header(title: str):
@@ -138,7 +138,7 @@ def main():
         print(f"    {e.payload}")
 
     print_header("🎉 FIN DE LA DÉMONSTRATION")
-    print("\nActRun a permis à deux agents de :")
+    print("\nCerbere Cohort a permis à deux agents de :")
     print("  ✅ Travailler en parallèle sans se gêner (auto-merge)")
     print("  ✅ Éviter les écrasements silencieux (détection de conflits)")
     print("  ✅ Réserver des ressources (leases avec expiration)")
@@ -146,7 +146,7 @@ def main():
     print("\n" + "=" * 70 + "\n")
 
 def export_trace():
-    """Exporte le journal au format JSONL pour analyse par actrun-trace"""
+    """Exporte le journal au format JSONL pour analyse par cerbere-cohort-trace"""
     output_path = os.path.join(os.path.dirname(__file__), "trace.jsonl")
     with open(output_path, "w", encoding="utf-8") as f:
         for event in ws.get_events():
