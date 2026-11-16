@@ -1,8 +1,8 @@
-# ActRun concepts
+# Cerbere Cohort concepts
 
 > **Status: design notes; partially superseded by the implementation.** The current Python prototype implements a key-value workspace, isolated branches, three-way conflict detection, resolver strategies, content-addressed snapshots, verified replay, leases, deadlock detection, and SQLite persistence. This document also describes a future document/path-oriented model that is **not** the current implementation. For shipped behavior, use the README status table and source code as the authority.
 
-ActRun coordinates agents that share mutable state. This document fixes the vocabulary and the exact rules, so that code, tests and docs argue about the same thing.
+Cerbere Cohort coordinates agents that share mutable state. This document fixes the vocabulary and the exact rules, so that code, tests and docs argue about the same thing.
 
 ## 1. Scope of v1
 
@@ -95,7 +95,7 @@ The same rule extends to more than two branches: a path conflicts when two or mo
 
 *Open question:* whether a partial merge of the non-conflicting paths should ever be offered as an option.
 
-**Invariant: ActRun never resolves a conflict silently.** Every conflict ends in an explicit resolution event or an abort event.
+**Invariant: Cerbere Cohort never resolves a conflict silently.** Every conflict ends in an explicit resolution event or an abort event.
 
 **Concurrent merges.** A merge commits with compare-and-swap on the target head. If the target moved since the merge started, the merge is retried against the new head or aborted. It never overwrites.
 
@@ -138,7 +138,7 @@ These sit alongside the runtime events already in the prototype (`run.started`, 
 
 **What replay guarantees.** Given the log and its content objects, replaying reconstructs every snapshot and branch head exactly. Because snapshot ids derive from content and history, a faithful replay produces **identical ids**, and that is how we test it.
 
-**What replay does not do.** It replays *workspace state*, not agent behavior. ActRun does not re-run model calls and does not promise that re-running an agent produces the same writes.
+**What replay does not do.** It replays *workspace state*, not agent behavior. Cerbere Cohort does not re-run model calls and does not promise that re-running an agent produces the same writes.
 
 **Content storage (proposed).** The workspace directory holds the log plus a content-addressed object store (`objects/<hash>`). Events reference content by hash.
 
@@ -158,15 +158,15 @@ Deadlock detection will use a wait-for graph between agents and held leases. Exa
 
 This section reflects the author's current understanding. Corrections are welcome and encouraged.
 
-**Git branches and worktrees.** The closest existing answer, and the one to beat. If your agents only edit files in a repository, **a worktree per agent may be all you need**. ActRun is aimed at what Git does not model: agent identity and intent as first-class data on every write, a programmatic API at the granularity of agent actions, non-file state, leases and wait-for analysis between agents, and an event log designed to explain a multi-agent run. If ActRun cannot show value beyond Git for your case, use Git.
+**Git branches and worktrees.** The closest existing answer, and the one to beat. If your agents only edit files in a repository, **a worktree per agent may be all you need**. Cerbere Cohort is aimed at what Git does not model: agent identity and intent as first-class data on every write, a programmatic API at the granularity of agent actions, non-file state, leases and wait-for analysis between agents, and an event log designed to explain a multi-agent run. If Cerbere Cohort cannot show value beyond Git for your case, use Git.
 
-**Durable execution engines (Temporal and similar).** They make a single orchestrated workflow durable and replayable. They do not model shared mutable state among concurrent actors with merge semantics. The two are complementary, and ActRun's replay rule in section 5 follows the same principle of recording non-deterministic decisions.
+**Durable execution engines (Temporal and similar).** They make a single orchestrated workflow durable and replayable. They do not model shared mutable state among concurrent actors with merge semantics. The two are complementary, and Cerbere Cohort's replay rule in section 5 follows the same principle of recording non-deterministic decisions.
 
-**CRDTs.** They converge concurrent edits automatically without coordination, which is excellent for collaborative text. For agents, silent convergence can produce a result that is syntactically merged and semantically wrong. ActRun's stance is detect and escalate. A CRDT-based merge could later be offered as a resolution strategy.
+**CRDTs.** They converge concurrent edits automatically without coordination, which is excellent for collaborative text. For agents, silent convergence can produce a result that is syntactically merged and semantically wrong. Cerbere Cohort's stance is detect and escalate. A CRDT-based merge could later be offered as a resolution strategy.
 
 **Databases with transactions or MVCC.** Excellent for structured data with a fixed schema. They do not capture intent and provenance per write, and they are a poor fit for document-shaped agent artifacts. A database could serve as a backing store later.
 
-**Shared state in agent frameworks.** Some frameworks provide shared state with merge rules defined inside the framework. ActRun is framework-agnostic and aims to work underneath them.
+**Shared state in agent frameworks.** Some frameworks provide shared state with merge rules defined inside the framework. Cerbere Cohort is framework-agnostic and aims to work underneath them.
 
 ## 11. Non-goals
 
