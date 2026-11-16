@@ -1,6 +1,6 @@
-from actrun import ActRunEvent
+from cerbere_cohort import CerbereCohortEvent
 
 
 def test_event_jsonl_roundtrip():
-    e = ActRunEvent(agent_id="A", action="workspace.branch", payload={"branch_name": "x"})
-    assert ActRunEvent.from_jsonl(e.to_jsonl()) == e
+    e = CerbereCohortEvent(agent_id="A", action="workspace.branch", payload={"branch_name": "x"})
+    assert CerbereCohortEvent.from_jsonl(e.to_jsonl()) == e
