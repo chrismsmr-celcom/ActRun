@@ -1,12 +1,12 @@
-# Contributing to ActRun
+# Contributing to cerbere cohort
 
-Thanks for your interest in ActRun. This is an early-stage project, so contributions of every size matter, and so does honest feedback.
+Thanks for your interest in cerbere cohort. This is an early-stage project, so contributions of every size matter, and so does honest feedback.
 
 ## The most useful contribution right now
 
-**Evidence.** ActRun is a bet that agents sharing mutable state need real coordination primitives. We want to know whether that is true for you.
+**Evidence.** cerbere cohort is a bet that agents sharing mutable state need real coordination primitives. We want to know whether that is true for you.
 
-If you run several agents against shared state, please open a [multi-agent failure report](https://github.com/chrismsmr-celcom/ActRun/issues/new?template=multi_agent_failure.yml). A concrete story ("two agents rewrote the same file", "a run deadlocked", "I could not tell who changed what") is worth more than a pull request at this stage.
+If you run several agents against shared state, please open a [multi-agent failure report](https://github.com/chrismsmr-celcom/cerbere-cohort/issues/new?template=multi_agent_failure.yml). A concrete story ("two agents rewrote the same file", "a run deadlocked", "I could not tell who changed what") is worth more than a pull request at this stage.
 
 ## Ways to contribute
 
@@ -35,8 +35,8 @@ This avoids wasted work on a direction the project cannot accept.
 Requirements: Python 3.10+, Git, and the Rust toolchain (stable) for the trace analyzer.
 
 ```bash
-git clone https://github.com/chrismsmr-celcom/ActRun.git
-cd ActRun
+git clone https://github.com/chrismsmr-celcom/cerbere-cohort.git
+cd cerbere-cohort
 
 # Python
 cd python
@@ -51,11 +51,11 @@ cargo test
 ## Project layout
 
 ```
-ActRun/
+cerbere-cohort/
 ├── python/
-│   ├── src/actrun/          Library: workspace, merge, leases, deadlock, persistence, events
+│   ├── src/cerbere-cohort/          Library: workspace, merge, leases, deadlock, persistence, events
 │   └── tests/               pytest suite
-├── crates/actrun-trace/     Rust trace analyzer (reads JSONL events)
+├── crates/cerbere-cohort-trace/     Rust trace analyzer (reads JSONL events)
 ├── schemas/                 Event schema (draft)
 ├── docs/CONCEPTS.md         Semantics and acceptance criteria (the reference)
 ├── examples/                Runnable scenarios
@@ -76,7 +76,7 @@ pytest
 cargo fmt --check
 cargo clippy --all-targets
 cargo test
-cargo run -p actrun-trace -- example-trace.jsonl
+cargo run -p cerbere-cohort-trace -- example-trace.jsonl
 ```
 
 Run `cargo fmt` to fix formatting automatically.
