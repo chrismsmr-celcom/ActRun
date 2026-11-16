@@ -220,3 +220,60 @@ fn format_text_report(m: &Metrics) -> String {
     s.push_str("\n");
     s
 }
+use serde::Deserialize;
+use std::fs::File;
+use std::io::{self, BufRead};
+
+#[derive(Deserialize, Debug)]
+struct Event {
+    schema_version: String,
+    event_id: String,
+    timestamp: String,
+    agent_id: String,
+    action: String,
+    payload: serde_json::Value,
+}
+
+fn main() -> io::Result<()> {
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() < 2 {
+        eprintln!("Usage: actrun-trace <file.jsonl>");
+        std::process::exit(1);
+    }
+
+    let file = File::open(&args[1])?;
+    let reader = io::BufReader::new(file);
+
+    let mut total_events = 0;
+    let mut conflicts = 0;
+    let mut agents = std::collections::HashSet::new();
+
+    println!("🔍 Analyse de la trace : {}\n", args[1]);
+
+    for line in reader.lines() {
+        let line = line?;
+        if let Ok(event) = serde_json::from_str::<Event>(&line) {
+            total_events += 1;
+            agents.insert(event.agent_id.clone());
+
+            if event.action == "coordination.conflict" || event.action == "merge.conflict_detected" {
+                conflicts += 1;
+                println!("⚠️  CONFLIT détecté à {} par l'agent '{}'", event.timestamp, event.agent_id);
+                if let Some(keys) = event.payload.get("conflicting_keys") {
+                    println!("   Clés en conflit : {:?}", keys);
+                }
+            }
+        }
+    }
+
+    println!("\n📊 Résumé :");
+    println!("   - Événements totaux : {}", total_events);
+    println!("   - Agents uniques      : {}", agents.len());
+    println!("   - Conflits détectés   : {}", conflicts);
+    
+    if conflicts > 0 {
+        println!("   - Taux de conflit   : {:.1}%", (conflicts as f64 / total_events as f64) * 100.0);
+    }
+
+    Ok(())
+}
