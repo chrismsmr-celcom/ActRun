@@ -77,8 +77,14 @@ fn main() -> Result<()> {
             .with_context(|| format!("Erreur de parsing JSON ligne {}", line_num + 1))?;
 
         metrics.total_events += 1;
-        *metrics.events_by_action.entry(event.action.clone()).or_insert(0) += 1;
-        *metrics.events_by_agent.entry(event.agent_id.clone()).or_insert(0) += 1;
+        *metrics
+            .events_by_action
+            .entry(event.action.clone())
+            .or_insert(0) += 1;
+        *metrics
+            .events_by_agent
+            .entry(event.agent_id.clone())
+            .or_insert(0) += 1;
 
         if let Ok(ts) = DateTime::parse_from_rfc3339(&event.timestamp) {
             timestamps.push(ts.with_timezone(&Utc));
@@ -128,13 +134,25 @@ fn generate_report(metrics: &Metrics) -> String {
     s.push_str("📊 Rapport d'analyse ActRun\n");
     s.push_str("========================\n");
     s.push_str(&format!("Événements totaux : {}\n", metrics.total_events));
-    s.push_str(&format!("Agents uniques    : {}\n", metrics.events_by_agent.len()));
+    s.push_str(&format!(
+        "Agents uniques    : {}\n",
+        metrics.events_by_agent.len()
+    ));
     s.push_str(&format!("Commits réussis   : {}\n", metrics.total_commits));
     s.push_str(&format!("Commits abandonnés: {}\n", metrics.total_aborted));
     s.push_str(&format!("Branches créées   : {}\n", metrics.total_branches));
-    s.push_str(&format!("Conflits détectés : {}\n", metrics.total_conflicts));
-    s.push_str(&format!("Conflits / essais : {:.2}%\n", metrics.conflict_rate));
-    s.push_str(&format!("Overhead coord.   : {:.2}%\n", metrics.coordination_events_ratio));
+    s.push_str(&format!(
+        "Conflits détectés : {}\n",
+        metrics.total_conflicts
+    ));
+    s.push_str(&format!(
+        "Conflits / essais : {:.2}%\n",
+        metrics.conflict_rate
+    ));
+    s.push_str(&format!(
+        "Overhead coord.   : {:.2}%\n",
+        metrics.coordination_events_ratio
+    ));
 
     if let (Some(first), Some(last)) = (&metrics.first_event, &metrics.last_event) {
         s.push_str(&format!("Période           : {} -> {}\n", first, last));
