@@ -1,6 +1,6 @@
 import sqlite3
 
-from actrun.persistence import PersistentWorkspace
+from cerbere_cohort.persistence import PersistentWorkspace
 
 
 def test_roundtrip_state_events_and_leases(tmp_path):
@@ -61,7 +61,7 @@ def test_reload_is_a_verified_replay_with_identical_ids(tmp_path):
 
 def test_conflict_event_is_persisted_even_though_commit_raises(tmp_path):
     import pytest
-    from actrun import ConflictError
+    from cerbere_cohort import ConflictError
     db = tmp_path / "ws.db"
     with PersistentWorkspace(db) as ws:
         ws.seed({"k": 1})
@@ -77,7 +77,7 @@ def test_conflict_event_is_persisted_even_though_commit_raises(tmp_path):
 
 def test_tampered_database_is_refused_at_load(tmp_path):
     import pytest
-    from actrun import ReplayError
+    from cerbere_cohort import ReplayError
     db = tmp_path / "ws.db"
     with PersistentWorkspace(db) as ws:
         ws.seed({"k": "valeur"})
@@ -92,7 +92,7 @@ def test_tampered_database_is_refused_at_load(tmp_path):
 def test_log_written_before_replay_format_is_refused(tmp_path):
     import json
     import pytest
-    from actrun import ReplayError
+    from cerbere_cohort import ReplayError
     db = tmp_path / "old.db"
     PersistentWorkspace(db).close()
     con = sqlite3.connect(db)
@@ -108,7 +108,7 @@ def test_log_written_before_replay_format_is_refused(tmp_path):
 
 
 def test_resolved_commit_survives_reload_and_replays_identically(tmp_path):
-    from actrun import PreferBranch
+    from cerbere_cohort import PreferBranch
     db = tmp_path / "res.db"
     with PersistentWorkspace(db) as ws:
         ws.seed({"spec": "v1"})
