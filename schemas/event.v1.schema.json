@@ -33,5 +33,23 @@
       "type": "object",
       "description": "Optional context (e.g., trace_id, session_id)"
     }
+ {
+  "required": ["schema_version", "event_id", "timestamp", "agent_id", "action", "payload"],
+  "properties": {
+    "schema_version": {
+      "type": "string",
+      "const": "1.0.0",
+      "description": "Version of the event schema"
+    },
+    "event_id": { "type": "string", "format": "uuid" },
+    "timestamp": { "type": "string", "format": "date-time" },
+    "agent_id": { "type": "string" },
+    "action": { 
+      "type": "string",
+      "enum": ["workspace.branch", "workspace.commit", "lease.acquire", "lease.release", "coordination.conflict", "coordination.resolved", "coordination.aborted", "tool.call", "document.written", "merge.conflict_detected"]
+    },
+    "payload": { "type": "object" },
+    "metadata": { "type": "object" }
+    }
   }
 }
