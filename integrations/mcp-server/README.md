@@ -1,6 +1,6 @@
-# ActRun MCP Server
+# cerbere_cohort MCP Server
 
-Serveur MCP qui expose les outils de coordination ActRun à n'importe quel LLM compatible (Claude, GPT, etc.).
+Serveur MCP qui expose les outils de coordination cerbere_cohort à n'importe quel LLM compatible (Claude, GPT, etc.).
 
 ## Installation
 
@@ -15,10 +15,10 @@ Windows : %APPDATA%\Claude\claude_desktop_config.json
 
 {
   "mcpServers": {
-    "actrun": {
+    "cerbere_cohort": {
       "command": "python",
       "args": ["-m", "mcp_server"],
-      "cwd": "/chemin/vers/ActRun/integrations/mcp-server/src"
+      "cwd": "/chemin/vers/cerbere_cohort/integrations/mcp-server/src"
     }
   }
 }
@@ -28,10 +28,10 @@ Dans .cursor/mcp.json :
 
 {
   "mcpServers": {
-    "actrun": {
+    "cerbere_cohort": {
       "command": "python",
       "args": ["-m", "mcp_server"],
-      "cwd": "/chemin/vers/ActRun/integrations/mcp-server/src"
+      "cwd": "/chemin/vers/cerbere_cohort/integrations/mcp-server/src"
     }
   }
 }
