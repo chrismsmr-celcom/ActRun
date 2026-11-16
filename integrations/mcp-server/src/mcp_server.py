@@ -1,7 +1,7 @@
 """
-ActRun MCP Server
+Cerbere Cohort MCP Server
 =================
-Expose ActRun coordination tools to LLMs via Model Context Protocol.
+Expose Cerbere Cohort coordination tools to LLMs via Model Context Protocol.
 
 Usage:
     python -m mcp_server
@@ -12,16 +12,16 @@ import sys
 import os
 from typing import Any
 
-# Ajouter le chemin pour importer actrun (si pas installé globalement)
+# Ajouter le chemin pour importer cerbere_cohort (si pas installé globalement)
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../../python/src'))
 
 from mcp.server import Server
 from mcp.server.stdio import stdio_server
 from mcp import types
 
-from actrun.workspace import Workspace
-from actrun.merge import ConflictError
-from actrun.lease import LeaseError
+from cerbere_cohort.workspace import Workspace
+from cerbere_cohort.merge import ConflictError
+from cerbere_cohort.lease import LeaseError
 
 # === État global partagé ===
 # Un seul workspace pour toute la session MCP
@@ -30,12 +30,12 @@ workspace = Workspace()
 # Initialiser avec un état par défaut
 workspace.seed({
     "status": "initialized",
-    "message": "ActRun workspace prêt. Utilisez les tools pour collaborer."
+    "message": "Cerbere Cohort workspace prêt. Utilisez les tools pour collaborer."
 })
 
 
 # === Création du serveur MCP ===
-server = Server("actrun")
+server = Server("cerbere_cohort")
 
 
 # === DÉFINITION DES TOOLS ===
