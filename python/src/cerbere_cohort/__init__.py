@@ -11,7 +11,7 @@ from .deadlock import WaitForGraph, DeadlockCycle, DeadlockError
 
 __version__ = "0.1.0"
 __all__ = [
-    "CerbereCohortEvent", "ActRunEvent", "Workspace", "Snapshot", "Branch", "ContentStore", "ReplayError",
+    "CerbereCohortEvent", "Workspace", "Snapshot", "Branch", "ContentStore", "ReplayError",
     "Conflict", "Side", "Resolution", "Resolver", "ResolutionError", "PreferBranch",
     "PreferHead", "PreferAgent", "CallbackResolver", "ResolverChain",
     "ContentError", "canonical_json", "content_hash", "snapshot_id",
@@ -19,6 +19,3 @@ __all__ = [
     "LeaseManager", "Lease", "LeaseError",
     "WaitForGraph", "DeadlockCycle", "DeadlockError",
 ]
-
-# Backward-compatible public name.
-ActRunEvent = CerbereCohortEvent
