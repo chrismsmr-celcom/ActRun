@@ -1,7 +1,7 @@
 # python/src/actrun/events.py
 import uuid
 from datetime import datetime, timezone
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -14,7 +14,7 @@ class ActRunEvent(BaseModel):
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    schema_version: str = Field(
+    schema_version: Literal["1.0.0"] = Field(
         default="1.0.0",
         description="Version of the serialized event contract",
     )
