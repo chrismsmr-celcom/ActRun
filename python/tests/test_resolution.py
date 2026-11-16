@@ -4,7 +4,7 @@ import threading
 
 import pytest
 
-from actrun import (ActRunEvent, CallbackResolver, ConflictError, PreferAgent, PreferBranch, PreferHead,
+from cerbere_cohort import (CerbereCohortEvent, CallbackResolver, ConflictError, PreferAgent, PreferBranch, PreferHead,
                     Resolution, ResolutionError, ResolverChain, ReplayError, Workspace, content_hash)
 
 
@@ -177,7 +177,7 @@ def test_replay_rejects_a_log_whose_recorded_decision_disagrees():
     events = []
     for e in ws.get_events():
         if e.action == "workspace.commit" and e.payload["merge_type"] == "resolved":
-            e = ActRunEvent(**{**e.model_dump(), "payload": {**e.payload, "resolutions": {"spec": content_hash("autre")}}})
+            e = CerbereCohortEvent(**{**e.model_dump(), "payload": {**e.payload, "resolutions": {"spec": content_hash("autre")}}})
         events.append(e)
     with pytest.raises(ReplayError, match="décision enregistrée incohérente"):
         Workspace.replay(events, ws.store)
@@ -190,7 +190,7 @@ def test_logs_from_before_m2_still_replay():
     for e in ws.get_events():
         if e.action == "workspace.commit":
             payload = {k: v for k, v in e.payload.items() if k not in ("resolutions", "intents")}
-            e = ActRunEvent(**{**e.model_dump(), "payload": payload})
+            e = CerbereCohortEvent(**{**e.model_dump(), "payload": payload})
         old.append(e)
     assert Workspace.replay(old, ws.store).head.version_id == ws.head.version_id
 
