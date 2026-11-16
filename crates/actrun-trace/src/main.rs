@@ -48,7 +48,16 @@ struct Metrics {
     last_event: Option<String>,
 }
 
-fn conflict_rate(total_commits: usize, total_aborted: usize, total_conflicts: usize) -> f64 {\n    let attempts = total_commits + total_aborted;\n    if attempts == 0 {\n        0.0\n    } else {\n        total_conflicts as f64 / attempts as f64 * 100.0\n    }\n}\n\nfn main() -> Result<()> {
+fn conflict_rate(total_commits: usize, total_aborted: usize, total_conflicts: usize) -> f64 {
+    let attempts = total_commits + total_aborted;
+    if attempts == 0 {
+        0.0
+    } else {
+        total_conflicts as f64 / attempts as f64 * 100.0
+    }
+}
+
+fn main() -> Result<()> {
     let args = Args::parse();
     let file =
         File::open(&args.input).with_context(|| format!("Impossible d'ouvrir {:?}", args.input))?;
