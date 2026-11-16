@@ -3,7 +3,7 @@ import time
 
 import pytest
 
-from actrun import DeadlockError, LeaseError, LeaseManager, Workspace
+from cerbere_cohort import DeadlockError, LeaseError, LeaseManager, Workspace
 
 
 def test_lease_required_only_when_enabled():
