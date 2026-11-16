@@ -48,7 +48,3 @@ class CerbereCohortEvent(BaseModel):
         Legacy records without schema_version are accepted as v1.0.0.
         """
         return cls.model_validate_json(line)
-
-
-# Backward-compatible event model alias for existing integrations.
-ActRunEvent = CerbereCohortEvent
