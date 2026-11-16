@@ -1,6 +1,6 @@
 # ActRun concepts
 
-> **Status: design document.** This page describes the semantics ActRun is being built to provide. **None of the workspace, branch, merge or lease behavior described here is implemented yet.** Each section is marked *v1* (the first thing we will build and test), *Planned*, or *Open question*. When something ships, the README Status table changes, and this page is updated to match.
+> **Status: design notes; partially superseded by the implementation.** The current Python prototype implements a key-value workspace, isolated branches, three-way conflict detection, resolver strategies, content-addressed snapshots, verified replay, leases, deadlock detection, and SQLite persistence. This document also describes a future document/path-oriented model that is **not** the current implementation. For shipped behavior, use the README status table and source code as the authority.
 
 ActRun coordinates agents that share mutable state. This document fixes the vocabulary and the exact rules, so that code, tests and docs argue about the same thing.
 
@@ -99,7 +99,7 @@ The same rule extends to more than two branches: a path conflicts when two or mo
 
 **Concurrent merges.** A merge commits with compare-and-swap on the target head. If the target moved since the merge started, the merge is retried against the new head or aborted. It never overwrites.
 
-## 5. Resolution (Planned)
+## 5. Resolution (implemented in the key-value prototype)
 
 Resolution is how a detected conflict becomes a decision. It is pluggable.
 
