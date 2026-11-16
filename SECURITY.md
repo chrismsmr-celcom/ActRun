@@ -2,7 +2,7 @@
 
 ## Project status
 
-ActRun is experimental software under active development.
+*cerbere cohort* is experimental software under active development.
 
 The current implementation is not designed to provide a production security boundary. In particular, registered Python tools execute inside the same process as the runtime and inherit that process's permissions.
 
@@ -10,7 +10,7 @@ Do not rely on the current implementation to safely execute untrusted code, isol
 
 ## Supported versions
 
-Until ActRun publishes its first stable release, security fixes will generally target the latest version on the default development branch.
+Until cerbere cohort publishes its first stable release, security fixes will generally target the latest version on the default development branch.
 
 There is currently no long-term support policy for older versions.
 
@@ -43,7 +43,7 @@ Examples of security issues include:
 - Path traversal or unsafe file handling.
 - Exposure of credentials or sensitive data.
 - Incorrect handling of untrusted input that creates a security impact.
-- Vulnerabilities in dependencies that materially affect ActRun.
+- Vulnerabilities in dependencies that materially affect cerbere cohort.
 
 General questions, feature requests, and non-security bugs should be reported through the regular issue tracker.
 
@@ -71,7 +71,7 @@ The current prototype does not provide:
 - Guaranteed redaction of sensitive information in event logs.
 - A hardened multi-tenant execution environment.
 
-These limitations are important. A tool registered with ActRun can perform any action permitted to the Python process in which it runs.
+These limitations are important. A tool registered with cerbere cohort can perform any action permitted to the Python process in which it runs.
 
 ## Responsible disclosure
 
