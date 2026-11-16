@@ -38,7 +38,7 @@ The current Python implementation uses a key-value workspace.
 | Deadlock detection | A wait-for graph detects cycles before an agent waits indefinitely. |
 | SQLite persistence | `PersistentWorkspace` stores content objects, events, and active leases, then reconstructs state by replay on reload. |
 | MCP integration | An early stdio MCP server exposes workspace, branch, commit, lease, and event tools. |
-| Rust trace tool | An early CLI parses JSONL events and reports basic counts and coordination metrics. Its event contract is not yet aligned with the Python exporter. |
+| Rust trace tool | An early CLI parses versioned JSONL events and reports basic counts and coordination metrics. |
 
 cerbere-cohort is intended to sit alongside an agent framework. It does not create agents or execute model calls.
 
@@ -192,6 +192,7 @@ On reopening the database, the workspace is reconstructed from the stored object
 
 The Python API exposes structured events through `Workspace.get_events()`. Each event currently contains:
 
+- `schema_version` (`1.0.0`)
 - `event_id`
 - `timestamp`
 - `agent_id`
@@ -207,7 +208,7 @@ The Rust crate is named `actrun-trace`:
 cargo run -p actrun-trace -- example-trace.jsonl
 ```
 
-**Known limitation:** the current Rust analyzer expects a `schema_version` field, while the Python `ActRunEvent` model does not emit that field. The JSON Schema file also needs to be reconciled with the Python event model. Therefore, do not assume that JSONL exported by the current Python implementation is accepted by the Rust analyzer yet. This interoperability gap is tracked as unfinished work, not a supported end-to-end workflow.
+The Python event model, JSON Schema, sample JSONL log, and Rust parser now use the same `1.0.0` envelope. The Python reader and Rust parser also accept legacy records that omit `schema_version`, treating them as `1.0.0`. New events always serialize the version field. The analyzer remains an early prototype; run it against your own exported logs before depending on its metrics.
 
 ## MCP server (experimental)
 
@@ -270,8 +271,8 @@ flowchart TD
 | Leases and wait-for deadlock detection | Implemented; automated tests present |
 | SQLite persistence and JSONL export | Implemented; automated tests present |
 | MCP stdio integration | Prototype; not yet established as production-ready |
-| Rust trace analyzer | Prototype; Python/Rust event format mismatch remains |
-| Unified, versioned event schema | Work in progress |
+| Rust trace analyzer | Prototype; versioned Python JSONL contract aligned |
+| Versioned event schema (`1.0.0`) | Implemented; legacy records remain readable |
 | Document-oriented workspace and distributed operation | Design work; not current behavior |
 | Multi-process or multi-host coordination | Not implemented |
 | Authentication, authorization, sandboxing | Not provided |
