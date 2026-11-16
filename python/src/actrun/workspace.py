@@ -1,127 +1,389 @@
 # python/src/actrun/workspace.py
 import copy
-import uuid
-from dataclasses import dataclass
-from typing import Dict, Any, Optional, List
+import json
+import threading
+from dataclasses import dataclass, field
+from types import MappingProxyType
+from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
+
 from .events import ActRunEvent
-from .merge import detect_and_merge, MergeResult, ConflictError
-from .lease import LeaseManager, LeaseError
+from .hashing import ContentError, canonical_json, content_hash, hash_text, snapshot_id
+from .lease import LeaseError, LeaseManager
+from .merge import ConflictError, detect_and_merge
+from .resolve import Conflict, Resolution, ResolutionError, Resolver, Side
+
+
+class ReplayError(Exception):
+    """Le journal ne permet pas de reconstruire fidèlement l'état."""
+
+
+class ContentStore:
+    """Magasin adressé par le contenu : hash -> JSON canonique (append-only)."""
+
+    def __init__(self) -> None:
+        self._objects: Dict[str, str] = {}
+
+    def put(self, value: Any) -> str:
+        text = canonical_json(value)
+        digest = hash_text(text)
+        self._objects.setdefault(digest, text)
+        return digest
+
+    def get(self, digest: str) -> Any:
+        """Retourne une copie fraîche de la valeur (jamais l'objet interne)."""
+        return json.loads(self._objects[digest])
+
+    def has(self, digest: str) -> bool:
+        return digest in self._objects
+
+    def load_text(self, digest: str, text: str) -> None:
+        """Charge un objet persisté en vérifiant que son hash correspond."""
+        if hash_text(text) != digest:
+            raise ReplayError(f"objet corrompu : le contenu ne correspond pas au hash {digest[:12]}")
+        self._objects.setdefault(digest, text)
+
+    def dump(self) -> Dict[str, str]:
+        return dict(self._objects)
+
 
 @dataclass(frozen=True)
 class Snapshot:
-    """Une version immuable de l'état partagé."""
+    """Version immuable : mapping clé -> hash de contenu, plus les ids des parents."""
     version_id: str
-    data: Dict[str, Any]
-    parent_version: Optional[str] = None
+    entries: Mapping[str, str]
+    parents: Tuple[str, ...] = ()
+    store: ContentStore = field(default=None, repr=False, compare=False)  # type: ignore[assignment]
+
+    @property
+    def parent_version(self) -> Optional[str]:
+        return self.parents[0] if self.parents else None
+
+    @property
+    def data(self) -> Dict[str, Any]:
+        """Copie fraîche des valeurs : la modifier ne change pas le snapshot."""
+        return {key: self.store.get(digest) for key, digest in self.entries.items()}
+
+
+def _make_snapshot(entries: Mapping[str, str], parents: Tuple[str, ...], store: ContentStore) -> Snapshot:
+    frozen = MappingProxyType(dict(sorted(entries.items())))
+    return Snapshot(version_id=snapshot_id(frozen, parents), entries=frozen, parents=parents, store=store)
+
 
 class Branch:
     """Une copie de travail isolée pour un agent."""
-    def __init__(self, name: str, base_snapshot: Snapshot, lease_manager: LeaseManager, agent_id: str):
+
+    def __init__(self, name: str, base_snapshot: Snapshot, lease_manager: LeaseManager,
+                 agent_id: str, require_leases: bool = False):
         self.name = name
-        self.current_data = copy.deepcopy(base_snapshot.data)
+        self.current_data: Dict[str, Any] = base_snapshot.data
         self.base_version = base_snapshot.version_id
         self._lease_manager = lease_manager
         self._agent_id = agent_id
+        self._require_leases = require_leases
+        self.intents: Dict[str, str] = {}  # clé -> pourquoi (provenance, jamais utilisé pour décider)
 
-    def set(self, key: str, value: Any) -> None:
-        """
-        Modifie une clé. Nécessite un lease actif sur cette clé.
-        """
-        if not self._lease_manager.check_lease(self._agent_id, key):
+    def _check_write_allowed(self, key: str, verb: str) -> None:
+        if self._require_leases and not self._lease_manager.check_lease(self._agent_id, key):
             raise LeaseError(
                 f"L'agent '{self._agent_id}' doit acquérir un lease sur '{key}' "
-                f"avant de pouvoir le modifier."
+                f"avant de pouvoir le {verb}."
             )
-        self.current_data[key] = value
+
+    def _put(self, key: str, value: Any) -> None:
+        if not isinstance(key, str):
+            raise ContentError(f"les clés doivent être des str (reçu {type(key).__name__})")
+        # Valide ET normalise (copie profonde, types JSON) : ce qu'on lit == ce qu'on commit.
+        self.current_data[key] = json.loads(canonical_json(value))
+
+    def set(self, key: str, value: Any, intent: Optional[str] = None) -> None:
+        self._check_write_allowed(key, "modifier")
+        self._put(key, value)
+        self._note_intent(key, intent)
+
+    def _note_intent(self, key: str, intent: Optional[str]) -> None:
+        if intent:
+            self.intents[key] = intent
+        else:
+            self.intents.pop(key, None)
 
     def get(self, key: str, default: Any = None) -> Any:
         return self.current_data.get(key, default)
 
-    def delete(self, key: str) -> None:
-        if not self._lease_manager.check_lease(self._agent_id, key):
-            raise LeaseError(
-                f"L'agent '{self._agent_id}' doit acquérir un lease sur '{key}' "
-                f"avant de pouvoir le supprimer."
-            )
+    def delete(self, key: str, intent: Optional[str] = None) -> None:
+        self._check_write_allowed(key, "supprimer")
         self.current_data.pop(key, None)
+        self._note_intent(key, intent)
+
 
 class Workspace:
     """Le gestionnaire central du workspace partagé."""
-    def __init__(self):
-        self._snapshots: Dict[str, Snapshot] = {}
-        initial_snapshot = Snapshot(version_id=str(uuid.uuid4()), data={}, parent_version=None)
-        self._snapshots[initial_snapshot.version_id] = initial_snapshot
-        self._head_version = initial_snapshot.version_id
+
+    def __init__(self, require_leases: bool = False, store: Optional[ContentStore] = None):
+        self._require_leases = require_leases
+        self._store = store if store is not None else ContentStore()
+        self._lock = threading.RLock()  # un seul écrivain à la fois sur HEAD (CONCEPTS §8)
+        genesis = _make_snapshot({}, (), self._store)  # id déterministe
+        self._snapshots: Dict[str, Snapshot] = {genesis.version_id: genesis}
+        self._head_version = genesis.version_id
         self._events: List[ActRunEvent] = []
-        
-        # Nouveau : Gestionnaire de leases
         self._lease_manager = LeaseManager()
 
     @property
     def head(self) -> Snapshot:
         return self._snapshots[self._head_version]
 
+    @property
+    def store(self) -> ContentStore:
+        return self._store
+
     def create_branch(self, agent_id: str, branch_name: str) -> Branch:
-        branch = Branch(
-            name=branch_name, 
-            base_snapshot=self.head,
-            lease_manager=self._lease_manager,
-            agent_id=agent_id
-        )
-        self._events.append(ActRunEvent(
-            agent_id=agent_id, action="workspace.branch",
-            payload={"branch_name": branch_name, "base_version": self._head_version}
-        ))
+        with self._lock:
+            branch = Branch(
+                name=branch_name,
+                base_snapshot=self.head,
+                lease_manager=self._lease_manager,
+                agent_id=agent_id,
+                require_leases=self._require_leases,
+            )
+            self._events.append(ActRunEvent(
+                agent_id=agent_id, action="workspace.branch",
+                payload={"branch_name": branch_name, "base_version": self._head_version},
+            ))
         return branch
 
-    def commit(self, agent_id: str, branch: Branch) -> Snapshot:
-        """Tente de valider les modifications avec détection de conflits."""
-        base_snapshot = self._snapshots[branch.base_version]
-        
-        merge_result = detect_and_merge(
-            base_data=base_snapshot.data,
-            branch_data=branch.current_data,
-            current_head_data=self.head.data
+    def commit(self, agent_id: str, branch: Branch, resolver: Optional[Resolver] = None,
+               max_retries: int = 3) -> Snapshot:
+        """Valide une branche : fusion à trois voies, jamais d'écrasement silencieux.
+
+        Sans `resolver`, un conflit annule le commit (ConflictError). Avec un résolveur,
+        chaque conflit reçoit une décision enregistrée (`coordination.resolved`). Le résolveur
+        est appelé HORS du verrou (un humain ou un modèle peut être lent) ; si HEAD a bougé
+        pendant ce temps, la fusion est refaite contre le nouveau HEAD (CONCEPTS §4).
+        """
+        for _ in range(max_retries + 1):
+            with self._lock:
+                head = self.head
+                base = self._snapshots[branch.base_version]
+                branch_entries = {key: content_hash(value) for key, value in branch.current_data.items()}
+                result = detect_and_merge(base.entries, branch_entries, head.entries)
+                if result.success:
+                    return self._finalize(agent_id, branch, base, head, branch_entries, result.merged_data, {}, None)
+
+                conflicts = [self._build_conflict(key, agent_id, branch, base, head, branch_entries)
+                             for key in result.conflicting_keys]
+                self._events.append(ActRunEvent(
+                    agent_id=agent_id, action="coordination.conflict",
+                    payload={"branch_name": branch.name, "base_version": branch.base_version,
+                             "head_version": head.version_id,
+                             "conflicting_keys": result.conflicting_keys},
+                ))
+                if resolver is None:
+                    self._abort(agent_id, branch, head, result.conflicting_keys, result.conflicting_keys,
+                                None, "no_resolver")
+                    raise ConflictError(
+                        f"Conflit détecté lors du commit de l'agent {agent_id}. "
+                        f"Les clés suivantes ont été modifiées simultanément : {result.conflicting_keys}",
+                        conflicting_keys=result.conflicting_keys,
+                    )
+
+            decisions = self._decide(agent_id, branch, head, resolver, conflicts)  # hors verrou
+
+            with self._lock:
+                if self._head_version != head.version_id:
+                    continue  # HEAD a bougé pendant la décision : on refait la fusion
+                return self._finalize(agent_id, branch, base, head, branch_entries,
+                                      result.merged_data, decisions, resolver.name)
+
+        with self._lock:
+            self._abort(agent_id, branch, self.head, [], [], getattr(resolver, "name", None), "head_kept_moving")
+        raise ConflictError(
+            f"HEAD a changé {max_retries + 1} fois pendant la résolution : commit annulé, rien n'a été écrasé.",
+            conflicting_keys=[],
         )
-        
-        if not merge_result.success:
+
+    def _build_conflict(self, key: str, agent_id: str, branch: Branch, base: Snapshot,
+                        head: Snapshot, branch_entries: Mapping[str, str]) -> Conflict:
+        base_hash, head_hash = base.entries.get(key), head.entries.get(key)
+        head_agent, head_intent = self._last_writer(key)
+        return Conflict(
+            key=key,
+            base=Side(present=base_hash is not None, hash=base_hash,
+                      value=self._store.get(base_hash) if base_hash else None),
+            ours=Side(present=key in branch.current_data, hash=branch_entries.get(key),
+                      value=copy.deepcopy(branch.current_data.get(key)),
+                      agent_id=agent_id, intent=branch.intents.get(key)),
+            theirs=Side(present=head_hash is not None, hash=head_hash,
+                        value=self._store.get(head_hash) if head_hash else None,
+                        agent_id=head_agent, intent=head_intent),
+        )
+
+    def _last_writer(self, key: str) -> Tuple[Optional[str], Optional[str]]:
+        for event in reversed(self._events):
+            if event.action == "workspace.commit" and key in event.payload.get("changes", {}):
+                return event.agent_id, event.payload.get("intents", {}).get(key)
+        return None, None
+
+    def _decide(self, agent_id: str, branch: Branch, head: Snapshot, resolver: Resolver,
+                conflicts: List[Conflict]) -> Dict[str, Resolution]:
+        """Interroge le résolveur (hors verrou). Annule proprement si non résolu ou invalide."""
+        decisions: Dict[str, Resolution] = {}
+        unresolved: List[str] = []
+        all_keys = [c.key for c in conflicts]
+        for conflict in conflicts:
+            try:
+                decision = resolver.resolve(conflict)
+                if decision is not None:
+                    if not isinstance(decision, Resolution):
+                        raise ResolutionError(f"le résolveur doit rendre une Resolution ou None (reçu {type(decision).__name__})")
+                    if decision.present:
+                        content_hash(decision.value)  # valide tout de suite : JSON strict
+            except Exception as exc:  # noqa: BLE001 - tout échec de résolveur annule le commit
+                with self._lock:
+                    self._abort(agent_id, branch, head, all_keys, [conflict.key], resolver.name,
+                                "resolver_error", error=repr(exc))
+                if isinstance(exc, ResolutionError):
+                    raise
+                raise ResolutionError(f"résolveur '{resolver.name}' en échec sur '{conflict.key}' : {exc!r}") from exc
+            if decision is None:
+                unresolved.append(conflict.key)
+            else:
+                decisions[conflict.key] = decision
+        if unresolved:
+            with self._lock:
+                self._abort(agent_id, branch, head, all_keys, unresolved, resolver.name, "unresolved")
             raise ConflictError(
-                f"Conflit détecté lors du commit de l'agent {agent_id}. "
-                f"Les clés suivantes ont été modifiées simultanément : {merge_result.conflicting_keys}",
-                conflicting_keys=merge_result.conflicting_keys
+                f"Conflit non résolu par '{resolver.name}' pour : {unresolved}. Rien n'a été écrasé.",
+                conflicting_keys=unresolved,
             )
-        
-        new_snapshot = Snapshot(
-            version_id=str(uuid.uuid4()),
-            data=merge_result.merged_data,
-            parent_version=self._head_version
-        )
-        self._snapshots[new_snapshot.version_id] = new_snapshot
-        self._head_version = new_snapshot.version_id
-        
+        return decisions
+
+    def _abort(self, agent_id: str, branch: Branch, head: Snapshot, conflicting: List[str],
+               unresolved: List[str], resolver_name: Optional[str], reason: str, **extra: Any) -> None:
+        """Tout conflit finit par une résolution OU un abandon : jamais de silence."""
+        self._events.append(ActRunEvent(
+            agent_id=agent_id, action="coordination.aborted",
+            payload={"branch_name": branch.name, "base_version": branch.base_version,
+                     "head_version": head.version_id, "conflicting_keys": conflicting,
+                     "unresolved_keys": unresolved, "resolver": resolver_name, "reason": reason, **extra},
+        ))
+
+    def _finalize(self, agent_id: str, branch: Branch, base: Snapshot, head: Snapshot,
+                  branch_entries: Mapping[str, str], merged: Mapping[str, str],
+                  decisions: Dict[str, Resolution], resolver_name: Optional[str]) -> Snapshot:
+        """Crée le snapshot (sous verrou, HEAD vérifié inchangé) et journalise."""
+        entries = dict(merged)
+        for value in branch.current_data.values():
+            self._store.put(value)
+
+        resolutions: Dict[str, Optional[str]] = {}
+        for key, decision in sorted(decisions.items()):
+            if decision.present:
+                digest: Optional[str] = self._store.put(decision.value)
+                entries[key] = digest  # type: ignore[assignment]
+            else:
+                digest = None
+                entries.pop(key, None)
+            resolutions[key] = digest
+            self._events.append(ActRunEvent(
+                agent_id=agent_id, action="coordination.resolved",
+                payload={"branch_name": branch.name, "key": key, "resolver": resolver_name,
+                         "choice_hash": digest, "rationale": decision.rationale,
+                         "base_version": branch.base_version, "head_version": head.version_id},
+            ))
+
+        parents = (head.version_id,) if branch.base_version == head.version_id \
+            else (head.version_id, branch.base_version)
+        snapshot = _make_snapshot(entries, parents, self._store)
+        self._snapshots[snapshot.version_id] = snapshot
+        self._head_version = snapshot.version_id
+
+        changes = {key: entries.get(key) for key in sorted(set(entries) | set(head.entries))
+                   if entries.get(key) != head.entries.get(key)}
         self._events.append(ActRunEvent(
             agent_id=agent_id, action="workspace.commit",
             payload={
-                "version_id": new_snapshot.version_id,
-                "parent_version": new_snapshot.parent_version,
-                "merge_type": "auto-merge" if merge_result.merged_data != branch.current_data else "fast-forward",
-                "keys_modified": list(branch.current_data.keys())
-            }
+                "version_id": snapshot.version_id,
+                "parent_version": parents[0],
+                "parents": list(parents),
+                "merge_type": "resolved" if resolutions else ("fast-forward" if len(parents) == 1 else "auto-merge"),
+                "keys_modified": sorted(k for k in set(base.entries) | set(branch_entries)
+                                        if base.entries.get(k) != branch_entries.get(k)),
+                "changes": changes,        # clé -> hash du nouveau contenu, ou null si supprimée
+                "resolutions": resolutions,  # décisions appliquées : le replay les VÉRIFIE
+                "intents": {k: branch.intents[k] for k in changes if k in branch.intents and k not in resolutions},
+            },
         ))
-        return new_snapshot
+        return snapshot
 
-    def acquire_lease(self, agent_id: str, resource_key: str, duration_seconds: float = 30.0) -> Any:
-        """Acquiert un verrou sur une ressource."""
-        return self._lease_manager.acquire(agent_id, resource_key, duration_seconds)
+    def seed(self, data: Dict[str, Any], agent_id: str = "system") -> Snapshot:
+        """Initialise l'état par un vrai commit (journalisé, rejouable). Ignore les leases."""
+        branch = self.create_branch(agent_id, "seed")
+        for key, value in data.items():
+            branch._put(key, value)
+        return self.commit(agent_id, branch)
+
+    # --- Replay -----------------------------------------------------------------
+
+    @classmethod
+    def replay(cls, events: Iterable[ActRunEvent], store: ContentStore,
+               require_leases: bool = False) -> "Workspace":
+        """Reconstruit l'état depuis le journal et VÉRIFIE chaque id de snapshot.
+
+        Seuls les événements `workspace.commit` modifient l'état ; les autres sont
+        recopiés tels quels dans le journal du workspace reconstruit. Les agents ne
+        sont pas ré-exécutés : on rejoue l'état, pas le comportement (CONCEPTS §7).
+        """
+        ws = cls(require_leases=require_leases, store=store)
+        for event in events:
+            ws._events.append(event)
+            if event.action != "workspace.commit":
+                continue
+            p = event.payload
+            if "changes" not in p or "parents" not in p:
+                raise ReplayError(
+                    f"événement {event.event_id} : format antérieur au replay (champs 'changes'/'parents' absents)"
+                )
+            parents = tuple(p["parents"])
+            if not parents or parents[0] != ws._head_version:
+                raise ReplayError(
+                    f"chaîne rompue : le commit {str(p.get('version_id'))[:12]} attend le parent "
+                    f"{str(parents[:1])} mais HEAD est {ws._head_version[:12]}"
+                )
+            if any(parent not in ws._snapshots for parent in parents):
+                raise ReplayError(f"parent inconnu dans {list(parents)}")
+            entries = dict(ws.head.entries)
+            for key, digest in p["changes"].items():
+                if digest is None:
+                    entries.pop(key, None)
+                elif store.has(digest):
+                    entries[key] = digest
+                else:
+                    raise ReplayError(f"objet {digest[:12]} manquant pour la clé '{key}'")
+            for key, digest in p.get("resolutions", {}).items():
+                if entries.get(key) != digest:
+                    raise ReplayError(f"décision enregistrée incohérente pour '{key}' dans {event.event_id}")
+            snapshot = _make_snapshot(entries, parents, store)
+            if snapshot.version_id != p["version_id"]:
+                raise ReplayError(
+                    f"id divergent : journal={str(p['version_id'])[:12]} reconstruit={snapshot.version_id[:12]}"
+                )
+            ws._snapshots[snapshot.version_id] = snapshot
+            ws._head_version = snapshot.version_id
+        return ws
+
+    # --- Leases -----------------------------------------------------------------
+
+    def acquire_lease(self, agent_id: str, resource_key: str, duration_seconds: float = 30.0, **kwargs) -> Any:
+        """Acquiert un verrou (kwargs : wait, timeout_seconds)."""
+        return self._lease_manager.acquire(agent_id, resource_key, duration_seconds, **kwargs)
 
     def release_lease(self, agent_id: str, resource_key: str) -> None:
         """Libère un verrou sur une ressource."""
         self._lease_manager.release(agent_id, resource_key)
 
     def get_events(self) -> List[ActRunEvent]:
-        """Retourne tous les événements (workspace + leases)."""
+        """Retourne tous les événements (workspace + leases), triés par timestamp (tri stable)."""
         all_events = self._events.copy()
         all_events.extend(self._lease_manager.get_events())
-        # Trier par timestamp
         all_events.sort(key=lambda e: e.timestamp)
         return all_events

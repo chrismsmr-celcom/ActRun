@@ -44,90 +44,56 @@ class LeaseManager:
         resource_key: str,
         duration_seconds: float = 30.0,
         wait: bool = False,
-        timeout_seconds: float = 5.0
+        timeout_seconds: float = 5.0,
     ) -> Lease:
-        """
-        Acquiert un verrou sur une ressource.
-        
-        Args:
-            agent_id: L'agent qui demande le verrou
-            resource_key: La ressource à verrouiller
-            duration_seconds: Durée du verrou
-            wait: Si True, attend que la ressource se libère (avec détection de deadlock)
-            timeout_seconds: Timeout d'attente si wait=True
-        
+        """Acquiert un verrou sur une ressource.
+
+        wait=True : attend (jusqu'à timeout_seconds) que la ressource se libère.
+        Le verrou interne n'est JAMAIS tenu pendant l'attente, sinon personne
+        ne pourrait libérer la ressource ni créer l'arête qui ferme le cycle.
+
         Raises:
-            LeaseError: Si la ressource est déjà verrouillée et wait=False
-            DeadlockError: Si l'attente créerait un cycle de deadlock
+            LeaseError: ressource occupée (wait=False) ou timeout.
+            DeadlockError: l'attente fermerait un cycle dans le graphe d'attente.
         """
-        with self._lock:
-            self._cleanup_expired()
-            
-            # Cas 1 : Ressource libre → acquérir immédiatement
-            if resource_key not in self._active_leases:
-                return self._create_lease(agent_id, resource_key, duration_seconds)
-            
-            existing = self._active_leases[resource_key]
-            
-            # Cas 2 : Même agent → renouveler le lease
-            if existing.agent_id == agent_id:
-                existing.expires_at = time.time() + duration_seconds
-                return existing
-            
-            # Cas 3 : Ressource occupée par un autre agent
-            if not wait:
-                raise LeaseError(
-                    f"Ressource '{resource_key}' déjà verrouillée par '{existing.agent_id}' "
-                    f"jusqu'à {existing.expires_at:.2f}"
-                )
-            
-            # Cas 4 : Mode attente → vérifier les deadlocks
-            return self._acquire_with_wait(
-                agent_id, resource_key, duration_seconds, timeout_seconds
-            )
-    
-    def _acquire_with_wait(
-        self,
-        agent_id: str,
-        resource_key: str,
-        duration_seconds: float,
-        timeout_seconds: float
-    ) -> Lease:
-        """Acquiert avec attente et détection de deadlock."""
-        holder = self._active_leases[resource_key].agent_id
-        
-        # 1. Ajouter l'attente au graphe
-        self._wait_for_graph.add_wait(agent_id, holder, resource_key)
-        
-        # 2. DÉTECTION DE DEADLOCK : vérifier si un cycle existe
-        cycle = self._wait_for_graph.detect_cycle()
-        if cycle:
-            # Nettoyer avant de lever l'exception
-            self._wait_for_graph.remove_wait(agent_id)
-            raise DeadlockError(
-                f"DEADLOCK DÉTECTÉ ! Cycle : {cycle}"
-            )
-        
-        # 3. Pas de deadlock → attendre avec timeout
-        start_time = time.time()
-        while time.time() - start_time < timeout_seconds:
-            self._cleanup_expired()
-            
-            # La ressource s'est libérée ?
-            if resource_key not in self._active_leases:
-                self._wait_for_graph.remove_wait(agent_id)
-                return self._create_lease(agent_id, resource_key, duration_seconds)
-            
-            # Petite pause pour ne pas saturer le CPU
-            time.sleep(0.05)
-        
-        # Timeout atteint
-        self._wait_for_graph.remove_wait(agent_id)
-        raise LeaseError(
-            f"Timeout après {timeout_seconds}s en attendant '{resource_key}' "
-            f"(détenu par '{holder}')"
-        )
-    
+        deadline = time.monotonic() + timeout_seconds
+        try:
+            while True:
+                with self._lock:
+                    self._cleanup_expired()
+                    existing = self._active_leases.get(resource_key)
+
+                    if existing is None:
+                        return self._create_lease(agent_id, resource_key, duration_seconds)
+
+                    if existing.agent_id == agent_id:
+                        existing.expires_at = time.time() + duration_seconds
+                        return existing
+
+                    if not wait:
+                        raise LeaseError(
+                            f"Ressource '{resource_key}' déjà verrouillée par "
+                            f"'{existing.agent_id}' jusqu'à {existing.expires_at:.2f}"
+                        )
+
+                    # (re)déclare l'attente : le détenteur a pu changer entre deux tours
+                    self._wait_for_graph.remove_wait(agent_id)
+                    self._wait_for_graph.add_wait(agent_id, existing.agent_id, resource_key)
+                    cycle = self._wait_for_graph.detect_cycle()
+                    if cycle:
+                        raise DeadlockError(f"Deadlock détecté : {cycle}")
+
+                    if time.monotonic() >= deadline:
+                        raise LeaseError(
+                            f"Timeout après {timeout_seconds}s en attendant "
+                            f"'{resource_key}' (détenu par '{existing.agent_id}')"
+                        )
+                time.sleep(0.02)  # verrou relâché pendant la pause
+        finally:
+            if wait:
+                with self._lock:
+                    self._wait_for_graph.remove_wait(agent_id)
+
     def _create_lease(self, agent_id: str, resource_key: str, duration_seconds: float) -> Lease:
         """Crée et enregistre un nouveau lease."""
         now = time.time()

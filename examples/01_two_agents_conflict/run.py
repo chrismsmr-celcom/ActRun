@@ -26,7 +26,7 @@ def main():
     ws = Workspace()
     
     # État initial : un événement à organiser
-    ws.head.data.update({
+    ws.seed({
         "event_name": "Tech Conference 2026",
         "lieu": "non défini",
         "budget": 10000,

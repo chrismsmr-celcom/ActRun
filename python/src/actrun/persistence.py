@@ -9,12 +9,10 @@ import sqlite3
 import threading
 from pathlib import Path
 from typing import Optional, List, Dict, Any
-from datetime import datetime
 
 from .events import ActRunEvent
-from .workspace import Workspace, Snapshot, Branch
+from .workspace import Workspace, Snapshot, Branch, ContentStore
 from .lease import LeaseManager, Lease
-from .merge import detect_and_merge
 
 
 class PersistentWorkspace:
@@ -37,8 +35,10 @@ class PersistentWorkspace:
         self.auto_save = auto_save
         self._lock = threading.Lock()
         
-        # Workspace en mémoire (source de vérité rapide)
+        # Workspace en mémoire : reconstruit par replay du journal au chargement
         self._workspace = Workspace()
+        self._persisted_ids: set[str] = set()
+        self._persisted_hashes: set[str] = set()
         
         # Connexion SQLite
         self._conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
@@ -57,12 +57,9 @@ class PersistentWorkspace:
         """Crée les tables SQLite si elles n'existent pas."""
         with self._lock:
             self._conn.executescript("""
-                CREATE TABLE IF NOT EXISTS snapshots (
-                    version_id TEXT PRIMARY KEY,
-                    parent_version TEXT,
-                    data_json TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    FOREIGN KEY (parent_version) REFERENCES snapshots(version_id)
+                CREATE TABLE IF NOT EXISTS objects (
+                    hash TEXT PRIMARY KEY,
+                    content TEXT NOT NULL
                 );
                 
                 CREATE TABLE IF NOT EXISTS events (
@@ -93,49 +90,28 @@ class PersistentWorkspace:
             self._conn.commit()
     
     def _load_from_db(self):
-        """Charge l'état depuis SQLite vers le workspace en mémoire."""
+        """Reconstruit le workspace par REPLAY du journal (les ids sont vérifiés)."""
         with self._lock:
-            # Charger le dernier snapshot (HEAD)
-            cursor = self._conn.execute(
-                "SELECT version_id, parent_version, data_json FROM snapshots ORDER BY rowid DESC LIMIT 1"
-            )
-            row = cursor.fetchone()
-            
-            if row:
-                # Restaurer le HEAD
-                self._workspace._head_version = row['version_id']
-                snapshot = Snapshot(
-                    version_id=row['version_id'],
-                    data=json.loads(row['data_json']),
-                    parent_version=row['parent_version']
-                )
-                self._workspace._snapshots[row['version_id']] = snapshot
-                
-                # Charger tous les snapshots pour l'historique
-                cursor = self._conn.execute(
-                    "SELECT version_id, parent_version, data_json FROM snapshots"
-                )
-                for r in cursor:
-                    self._workspace._snapshots[r['version_id']] = Snapshot(
-                        version_id=r['version_id'],
-                        data=json.loads(r['data_json']),
-                        parent_version=r['parent_version']
-                    )
-            
-            # Charger les événements
-            cursor = self._conn.execute(
-                "SELECT event_id, timestamp, agent_id, action, payload_json, metadata_json FROM events ORDER BY timestamp"
-            )
-            for r in cursor:
-                event = ActRunEvent(
+            store = ContentStore()
+            for r in self._conn.execute("SELECT hash, content FROM objects"):
+                store.load_text(r['hash'], r['content'])
+                self._persisted_hashes.add(r['hash'])
+
+            events = []
+            for r in self._conn.execute(
+                "SELECT event_id, timestamp, agent_id, action, payload_json, metadata_json FROM events ORDER BY rowid"
+            ):
+                events.append(ActRunEvent(
                     event_id=r['event_id'],
                     timestamp=r['timestamp'],
                     agent_id=r['agent_id'],
                     action=r['action'],
                     payload=json.loads(r['payload_json']),
                     metadata=json.loads(r['metadata_json']) if r['metadata_json'] else None
-                )
-                self._workspace._events.append(event)
+                ))
+                self._persisted_ids.add(r['event_id'])
+
+            self._workspace = Workspace.replay(events, store)  # lève ReplayError si le journal est incohérent
             
             # Charger les leases actifs
             cursor = self._conn.execute(
@@ -160,23 +136,38 @@ class PersistentWorkspace:
         """Crée une branche et la persiste."""
         branch = self._workspace.create_branch(agent_id, branch_name)
         if self.auto_save:
-            self._save_last_event()
+            self._save_new_events()
         return branch
     
-    def commit(self, agent_id: str, branch: Branch) -> Snapshot:
+    def commit(self, agent_id: str, branch: Branch, resolver=None, max_retries: int = 3) -> Snapshot:
         """Committe et persiste le nouveau snapshot."""
-        snapshot = self._workspace.commit(agent_id, branch)
-        if self.auto_save:
-            self._save_snapshot(snapshot)
-            self._save_last_event()
+        try:
+            snapshot = self._workspace.commit(agent_id, branch, resolver=resolver, max_retries=max_retries)
+        finally:
+            # le conflit est aussi un événement : on le persiste même si commit lève
+            if self.auto_save:
+                self._save_new_objects()
+                self._save_new_events()
         return snapshot
+
+    def seed(self, data: Dict[str, Any], agent_id: str = "system") -> Snapshot:
+        """Initialise l'état par un commit journalisé et persisté."""
+        snapshot = self._workspace.seed(data, agent_id)
+        if self.auto_save:
+            self._save_new_objects()
+            self._save_new_events()
+        return snapshot
+
+    @property
+    def store(self) -> ContentStore:
+        return self._workspace.store
     
     def acquire_lease(self, agent_id: str, resource_key: str, duration_seconds: float = 30.0, **kwargs) -> Lease:
         """Acquiert un lease et le persiste."""
         lease = self._workspace.acquire_lease(agent_id, resource_key, duration_seconds, **kwargs)
         if self.auto_save:
             self._save_lease(lease)
-            self._save_last_event()
+            self._save_new_events()
         return lease
     
     def release_lease(self, agent_id: str, resource_key: str) -> None:
@@ -184,25 +175,21 @@ class PersistentWorkspace:
         self._workspace.release_lease(agent_id, resource_key)
         if self.auto_save:
             self._delete_lease(resource_key)
-            self._save_last_event()
+            self._save_new_events()
     
     def get_events(self) -> List[ActRunEvent]:
         return self._workspace.get_events()
     
     # === Méthodes de persistance ===
     
-    def _save_snapshot(self, snapshot: Snapshot):
-        """Sauvegarde un snapshot dans SQLite."""
+    def _save_new_objects(self):
+        """Persiste les contenus pas encore écrits. Toujours AVANT les événements qui les référencent."""
+        objects = self._workspace.store.dump()
         with self._lock:
-            self._conn.execute(
-                "INSERT OR REPLACE INTO snapshots (version_id, parent_version, data_json, created_at) VALUES (?, ?, ?, ?)",
-                (
-                    snapshot.version_id,
-                    snapshot.parent_version,
-                    json.dumps(snapshot.data, ensure_ascii=False),
-                    datetime.now().isoformat()
-                )
-            )
+            for digest, text in objects.items():
+                if digest not in self._persisted_hashes:
+                    self._conn.execute("INSERT OR IGNORE INTO objects (hash, content) VALUES (?, ?)", (digest, text))
+                    self._persisted_hashes.add(digest)
             self._conn.commit()
     
     def _save_lease(self, lease: Lease):
@@ -220,33 +207,32 @@ class PersistentWorkspace:
             self._conn.execute("DELETE FROM leases WHERE resource_key = ?", (resource_key,))
             self._conn.commit()
     
-    def _save_last_event(self):
-        """Sauvegarde le dernier événement ajouté."""
-        if not self._workspace._events:
-            return
-        
-        event = self._workspace._events[-1]
+    def _save_new_events(self):
+        """Persiste tous les événements pas encore écrits (workspace ET leases)."""
+        events = self._workspace.get_events()
         with self._lock:
-            self._conn.execute(
-                "INSERT OR REPLACE INTO events (event_id, timestamp, agent_id, action, payload_json, metadata_json) VALUES (?, ?, ?, ?, ?, ?)",
-                (
-                    event.event_id,
-                    event.timestamp,
-                    event.agent_id,
-                    event.action,
-                    json.dumps(event.payload, ensure_ascii=False),
-                    json.dumps(event.metadata, ensure_ascii=False) if event.metadata else None
+            for event in events:
+                if event.event_id in self._persisted_ids:
+                    continue
+                self._conn.execute(
+                    "INSERT OR IGNORE INTO events (event_id, timestamp, agent_id, action, payload_json, metadata_json) VALUES (?, ?, ?, ?, ?, ?)",
+                    (
+                        event.event_id,
+                        event.timestamp,
+                        event.agent_id,
+                        event.action,
+                        json.dumps(event.payload, ensure_ascii=False),
+                        json.dumps(event.metadata, ensure_ascii=False) if event.metadata else None,
+                    ),
                 )
-            )
+                self._persisted_ids.add(event.event_id)
             self._conn.commit()
-    
+
     # === Méthodes utilitaires ===
     
     def get_snapshot_count(self) -> int:
         """Retourne le nombre total de snapshots."""
-        with self._lock:
-            cursor = self._conn.execute("SELECT COUNT(*) FROM snapshots")
-            return cursor.fetchone()[0]
+        return len(self._workspace._snapshots)
     
     def get_event_count(self) -> int:
         """Retourne le nombre total d'événements."""
@@ -273,7 +259,7 @@ class PersistentWorkspace:
         
         with self._lock:
             cursor = self._conn.execute(
-                "SELECT event_id, timestamp, agent_id, action, payload_json, metadata_json FROM events ORDER BY timestamp"
+                "SELECT event_id, timestamp, agent_id, action, payload_json, metadata_json FROM events ORDER BY rowid"
             )
             
             with open(output_path, 'w', encoding='utf-8') as f:

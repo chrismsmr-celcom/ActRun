@@ -10,6 +10,10 @@ from typing import Dict, List, Set, Tuple
 from dataclasses import dataclass
 
 
+class DeadlockError(Exception):
+    """Levée quand une attente créerait un cycle (deadlock)."""
+
+
 @dataclass
 class DeadlockCycle:
     """Représente un cycle de deadlock détecté."""

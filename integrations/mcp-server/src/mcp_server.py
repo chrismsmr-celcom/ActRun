@@ -28,7 +28,7 @@ from actrun.lease import LeaseError
 workspace = Workspace()
 
 # Initialiser avec un état par défaut
-workspace.head.data.update({
+workspace.seed({
     "status": "initialized",
     "message": "ActRun workspace prêt. Utilisez les tools pour collaborer."
 })

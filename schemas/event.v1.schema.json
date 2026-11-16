@@ -23,7 +23,7 @@
     "action": {
       "type": "string",
       "description": "The type of action (e.g., 'workspace.branch', 'workspace.commit', 'lease.acquire')",
-      "enum": ["workspace.branch", "workspace.commit", "lease.acquire", "lease.release", "tool.call"]
+      "enum": ["workspace.branch", "workspace.commit", "lease.acquire", "lease.release", "coordination.conflict", "coordination.resolved", "coordination.aborted", "tool.call"]
     },
     "payload": {
       "type": "object",

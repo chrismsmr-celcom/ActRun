@@ -30,19 +30,14 @@ jobs:
         run: pytest
 
   rust:
-    name: Rust trace engine
+    name: Rust trace analyzer
     runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: rust/trace-engine
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: rust/trace-engine
       - name: Format
         run: cargo fmt --check
       - name: Clippy
@@ -50,4 +45,4 @@ jobs:
       - name: Test
         run: cargo test
       - name: Run on the example trace
-        run: cargo run -- ../../example-trace.jsonl
+        run: cargo run -p actrun-trace -- example-trace.jsonl

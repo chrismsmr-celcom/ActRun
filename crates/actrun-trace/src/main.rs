@@ -98,11 +98,9 @@ fn main() -> Result<()> {
         match event.action.as_str() {
             "workspace.commit" => {
                 metrics.total_commits += 1;
-                // Détecter si c'est un commit en conflit (payload contient "conflict" ou "failed")
-                if let Some(payload_str) = event.payload.as_object() {
-                    if payload_str.contains_key("conflict") {
-                        metrics.total_conflicts += 1;
-                    }
+                // `"conflict": false` ne doit pas compter comme un conflit.
+                if event.payload.get("conflict").and_then(|v| v.as_bool()) == Some(true) {
+                    metrics.total_conflicts += 1;
                 }
             }
             "workspace.branch" => {
