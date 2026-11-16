@@ -4,16 +4,16 @@
 
 **Shared state and coordination for multi-agent systems.**
 
-Versioned workspaces, conflict resolution and replayable audit logs, so your agents stop overwriting each other.
+Branches, conflict detection, leases and an append-only event log, so your agents stop overwriting each other.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Status: early development](https://img.shields.io/badge/status-early%20development-orange.svg)](#status)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-3776AB.svg)](python/)
-[![Rust](https://img.shields.io/badge/core-Rust-000000.svg)](rust/)
+[![Trace analyzer: Rust](https://img.shields.io/badge/trace%20analyzer-Rust-000000.svg)](crates/actrun-trace/)
 
 </div>
 
-> **Early development.** ActRun is an experimental prototype. The vision below is a design direction, not a feature list. The [Status](#status) section says exactly what works today and what does not. APIs and the event format will change.
+> **Early development.** ActRun is an experimental prototype. The [Status](#status) table says exactly what works today and what does not. APIs and the event format will change.
 
 ---
 
@@ -21,43 +21,107 @@ Versioned workspaces, conflict resolution and replayable audit logs, so your age
 
 One agent writing to a codebase, a database or a document works fine. Put three of them on the same task and things start to break:
 
-- Two agents edit the same file and one silently erases the other's work.
+- Two agents edit the same thing and one silently erases the other's work.
 - Agents duplicate effort, loop, or wait on each other forever.
 - Something goes wrong and nobody can say **which agent changed what, when, and why**.
-- You cannot replay a failed run to understand it.
 
 Agent frameworks help you *define* agents and workflows. Very little exists for what happens when several agents **share mutable state**. That is the gap ActRun explores.
 
 ## What ActRun is
 
-ActRun is a small, framework-agnostic coordination layer. It sits between your agents and the state they share, and it gives that state the guarantees we expect from any other concurrent system:
+A small, framework-agnostic coordination layer between your agents and the state they share:
 
 | Idea | What it means |
 | --- | --- |
-| **Versioned shared workspace** | Every agent works on its own branch of the shared state, with snapshots you can inspect and roll back. |
-| **Conflict detection and resolution** | Concurrent edits are detected, never silently overwritten. Merge strategies are pluggable, with a hook for an arbiter (a rule, a human, or another agent). |
-| **Leases and deadlock detection** | Agents can claim a resource for a bounded time. Circular waits are detected instead of hanging. |
-| **Append-only event log** | Every action is recorded as a structured event. The log is the source of truth, so audit and replay come for free. |
-| **Coordination metrics** | Measure what actually goes wrong: conflicts, duplicated work, loops, coordination overhead. |
+| **Branches and snapshots** | Each agent works on an isolated copy of the shared state. Nothing is visible to others until commit. |
+| **Conflict detection** | Commits are merged three-way, key by key. Concurrent edits that diverge are detected and refused, never silently overwritten. |
+| **Leases and deadlock detection** | Agents can claim a resource for a bounded time. Circular waits raise an error instead of hanging. |
+| **Append-only event log** | Every branch, commit, conflict and lease is recorded as a structured event, with the agent that caused it. |
+| **Trace analysis** | A Rust tool computes coordination metrics (conflict rate, coordination overhead) from the event log. |
 
-ActRun is designed to sit **alongside** your existing agent framework, not replace it.
+ActRun is designed to sit **alongside** your agent framework, not replace it.
+
+## Quick look
+
+```python
+from actrun import Workspace, ConflictError
+
+ws = Workspace()
+a = ws.create_branch("agent-a", "draft-a")
+b = ws.create_branch("agent-b", "draft-b")
+
+a.set("spec/auth", "draft written by A")
+b.set("spec/auth", "draft written by B")
+
+ws.commit("agent-a", a)          # fine
+try:
+    ws.commit("agent-b", b)      # same key, different content
+except ConflictError as e:
+    print(e.conflicting_keys)    # ['spec/auth']  (nothing was overwritten)
+
+for event in ws.get_events():
+    print(event.action, event.agent_id)
+```
+
+Leases are optional by default. To require an active lease before any write:
+
+```python
+ws = Workspace(require_leases=True)
+ws.acquire_lease("agent-a", "db/schema", duration_seconds=60)
+# wait=True blocks until free, and raises DeadlockError if waiting would form a cycle
+ws.acquire_lease("agent-b", "db/schema", wait=True, timeout_seconds=5)
+```
 
 ## Status
 
 | Area | State |
 | --- | --- |
-| Async Python runtime (model/tool loop, tool registry, step limits, per-tool timeouts) | **Available (prototype)** |
-| Structured JSONL event recording | **Available (prototype)** |
-| Exact-match evaluation | **Available (prototype)** |
-| Rust trace engine (aggregates metrics from JSONL events) | **Available (prototype)** |
-| Shared workspace, branching, snapshots | In design |
-| Conflict detection and merge strategies | In design |
-| Leases and deadlock detection | Planned |
+| Workspace: branches, snapshots, three-way merge, conflict detection (key-value model) | **Prototype, tested** |
+| Conflict, commit and branch events | **Prototype, tested** |
+| Leases (advisory by default, enforceable) and deadlock detection | **Prototype, tested** |
+| SQLite persistence and JSONL export | **Prototype, tested** |
+| Rust trace analyzer (metrics from JSONL events) | **Prototype** |
+| MCP server | **Draft, not yet covered by CI** |
+| Document model with content-addressed snapshots | Planned ([design](docs/CONCEPTS.md)) |
 | Deterministic replay | Planned |
-| MCP server and framework integrations | Planned |
+| Pluggable resolvers and arbiter hook | Planned |
 | Coordination benchmark | Planned |
 
-The prototype in this repository is the foundation: a runtime that records what agents do, and tooling that reads those records. The coordination layer is being built on top of it.
+Two things to know before you rely on it:
+
+- The code today implements a **key-value** state model with random snapshot ids. [`docs/CONCEPTS.md`](docs/CONCEPTS.md) describes the target model (documents, content hashes, replay). Closing that gap is the current milestone.
+- The event format is a **draft** (`schemas/event.v1.schema.json`) and has no `schema_version` field yet.
+
+## Try it
+
+Requirements: Python 3.10+. Rust (stable) only if you want the trace analyzer.
+
+```bash
+git clone https://github.com/chrismsmr-celcom/ActRun.git
+cd ActRun
+
+# Python: install, run the tests, run the demo
+cd python
+python -m pip install -e ".[dev]"
+pytest
+python ../examples/01_two_agents_conflict/run.py
+
+# Rust trace analyzer (from the repository root)
+cd ..
+cargo run -p actrun-trace -- example-trace.jsonl
+```
+
+You can export a real run with `PersistentWorkspace.export_events_jsonl("run.jsonl")` and feed it to the analyzer.
+
+Event payloads may contain application data. Do not write secrets or sensitive production data to event logs without your own redaction and access controls.
+
+## What ActRun is not
+
+- **Not an agent framework.** It does not define your agents or workflows.
+- **Not a model provider or adapter collection.**
+- **Not a security boundary.** It does not enforce permissions or sandbox anything.
+- **Not a hosted service.** It is a library and tools you run yourself.
+- **Not a replacement for Git** where Git is enough. If your agents only edit files in a repository, a worktree per agent may be all you need. See [prior art](docs/CONCEPTS.md#10-prior-art-why-not-just-use-x).
 
 ## Architecture (design direction)
 
@@ -72,109 +136,39 @@ flowchart LR
     A2 --> API
     A3 --> API
     API["Python SDK / MCP server"] --> CORE
-    subgraph CORE["ActRun core (Rust)"]
-        WS["Versioned workspace"]
-        CR["Conflict resolution"]
+    subgraph CORE["ActRun core (Python today)"]
+        WS["Branches and snapshots"]
+        CR["Conflict detection"]
         LE["Leases and deadlock detection"]
         LOG[("Append-only event log")]
     end
     WS --> LOG
     CR --> LOG
     LE --> LOG
-    LOG --> REPLAY["Replay and audit"]
-    LOG --> METRICS["Coordination metrics"]
+    LOG --> METRICS["Trace analyzer (Rust)"]
+    LOG -.-> REPLAY["Replay (planned)"]
 ```
 
-Principles:
-
-- **Event-sourced.** The log is the source of truth. Workspace state is derived from it.
-- **Framework-agnostic.** No dependency on a specific agent framework or model provider.
-- **Small core.** Prefer a few well-tested primitives over a large abstraction surface.
-- **Honest measurement.** Distinguish what is measured from what is assumed.
-
-## API sketch
-
-> **Design sketch only. This API does not exist yet.** It is shown to make the direction concrete and to invite feedback.
-
-```python
-from actrun import Workspace, merge
-
-ws = Workspace.open("./runs/feature-x")
-
-# Each agent works on its own branch of the shared state.
-agent_a = ws.branch("agent-a")
-agent_b = ws.branch("agent-b")
-
-agent_a.write("spec/auth.md", draft_a)
-agent_b.write("spec/auth.md", draft_b)
-
-# Concurrent edits to the same path are detected, not silently overwritten.
-result = ws.merge(
-    [agent_a, agent_b],
-    strategy=merge.three_way(fallback="arbiter"),
-)
-
-for conflict in result.conflicts:
-    print(conflict.path, conflict.branches)
-
-# Claim a resource for a bounded time.
-with ws.lease("db/schema.sql", holder="agent-a", ttl_seconds=60):
-    ...
-```
-
-## Try what exists today
-
-Requirements: Python 3.10+, Git, and the Rust toolchain if you want the trace engine.
-
-```bash
-git clone https://github.com/chrismsmr-celcom/ActRun.git
-cd ActRun
-
-# Python runtime and tests
-cd python
-python -m pip install -e ".[dev]"
-pytest
-
-# Rust trace engine
-cd ../rust/trace-engine
-cargo test
-cargo run -- ../../example-trace.jsonl
-```
-
-The Python runtime currently ships as `open-agent-harness` and imports as `agent_harness`. It will be renamed to `actrun` ([roadmap](#roadmap)).
-
-Event payloads may contain task text, tool arguments or other application data. Do not write secrets or sensitive production data to event logs without your own redaction and access controls.
-
-## What ActRun is not
-
-- **Not an agent framework.** It does not define your agents or workflows.
-- **Not a model provider or a model adapter collection.**
-- **Not a security boundary.** Registered tools run with the permissions of the host process. Do not use it to execute untrusted code.
-- **Not a hosted service.** It is a library and a set of tools you run yourself.
-
-## Why Rust and Python
-
-Agents live in Python, so the SDK is Python. The parts where correctness and throughput matter most, concurrency semantics and log processing, belong in a memory-safe systems language. Rust enters the core only where it earns its place: until a component is measured, the Python implementation stays the reference.
+Principles: event-sourced, framework-agnostic, small core, honest measurement (we separate what is measured from what is assumed).
 
 ## Roadmap
 
 Milestones are ordered, not dated.
 
-- [ ] **M0 Foundations**: CI, rename the package to `actrun`, specify the event schema, stabilize the public Python API.
-- [ ] **M1 Shared workspace**: Rust core with event log and workspace, branches and snapshots, optimistic concurrency, Python bindings.
-- [ ] **M2 Conflicts and leases**: merge strategies, arbiter hooks, leases, deadlock detection.
-- [ ] **M3 Observability**: deterministic replay, coordination metrics, a CLI trace viewer.
-- [ ] **M4 Integrations**: MCP server, examples for common agent frameworks, a coordination benchmark.
+- [x] **M0 Foundations**: package, tests, CI, first event schema draft.
+- [ ] **M1 Conformance**: pass the seven acceptance criteria of [`docs/CONCEPTS.md` §13](docs/CONCEPTS.md), including replay with identical snapshot ids. Add `schema_version` to events.
+- [ ] **M2 Resolution**: pluggable resolvers (rule, human, arbiter) with recorded decisions.
+- [ ] **M3 Observability**: replay, richer metrics, a CLI trace viewer.
+- [ ] **M4 Integrations**: stabilized MCP server, framework examples, a coordination benchmark.
 
 Items may change based on testing and feedback.
 
 ## Help shape it
 
-The most valuable contribution right now is **evidence**. If you run several agents against shared state, we want to hear what actually breaks for you:
+The most valuable contribution right now is **evidence**. If you run several agents against shared state, tell us what actually breaks:
 
-- Open an issue describing a concrete failure: two agents clobbering each other, a deadlock, a run you could not reproduce.
-- Tell us which primitives you would trust and which you would not.
-- Challenge the design. If a piece of the sketch above is wrong, say so.
+- Open a [multi-agent failure report](https://github.com/chrismsmr-celcom/ActRun/issues/new?template=multi_agent_failure.yml): two agents clobbering each other, a deadlock, a run you could not reproduce.
+- Challenge the design. If a piece of [`CONCEPTS.md`](docs/CONCEPTS.md) is wrong, say so.
 
 Code contributions are welcome too. Please read [CONTRIBUTING.md](CONTRIBUTING.md) first.
 
