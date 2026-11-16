@@ -1,13 +1,13 @@
-# crates/actrun-trace/Cargo.toml
+# crates/cerbere-cohort-trace/Cargo.toml
 [package]
-name = "actrun-trace"
+name = "cerbere-cohort-trace"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
-description = "Trace analyzer for ActRun event logs"
+description = "Trace analyzer for Cerbere Cohort event logs"
 
 [[bin]]
-name = "actrun-trace"
+name = "cerbere-cohort-trace"
 path = "src/main.rs"
 
 [dependencies]
