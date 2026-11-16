@@ -8,7 +8,7 @@ Give agents isolated working branches, merge their changes without silently over
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Python](https://img.shields.io/badge/python-%3E%3D3.10-3776AB.svg)](python/)
-[![Rust](https://img.shields.io/badge/trace%20tool-Rust-black.svg)](crates/actrun-trace/)
+[![Rust](https://img.shields.io/badge/trace%20tool-Rust-black.svg)](crates/cerbere-cohort-trace/)
 
 </div>
 
@@ -68,7 +68,7 @@ python -m pytest python/tests
 ### First example: conflicting writes
 
 ```python
-from actrun import ConflictError, Workspace
+from cerbere_cohort import ConflictError, Workspace
 
 workspace = Workspace()
 workspace.seed({"spec/auth": "initial"})
@@ -95,7 +95,7 @@ The second commit is rejected because both branches changed the same key differe
 ### Disjoint changes merge
 
 ```python
-from actrun import Workspace
+from cerbere_cohort import Workspace
 
 workspace = Workspace()
 workspace.seed({"status": "new", "owner": "unassigned"})
@@ -115,10 +115,10 @@ print(workspace.head.data)
 
 ### Resolve a conflict explicitly
 
-Resolvers are available from the `actrun` package. For example, `PreferBranch`, `PreferHead`, and `PreferAgent` provide predefined strategies.
+Resolvers are available from the `cerbere_cohort` package. For example, `PreferBranch`, `PreferHead`, and `PreferAgent` provide predefined strategies.
 
 ```python
-from actrun import PreferBranch, Workspace
+from cerbere_cohort import PreferBranch, Workspace
 
 workspace = Workspace()
 workspace.seed({"config": "v1"})
@@ -141,7 +141,7 @@ A resolver is a policy choice, not proof that the resulting content is semantica
 Leases are advisory unless the workspace is created with `require_leases=True`. When enforcement is enabled, a branch write requires the acting agent to hold a lease for the key.
 
 ```python
-from actrun import LeaseError, Workspace
+from cerbere_cohort import LeaseError, Workspace
 
 workspace = Workspace(require_leases=True)
 branch = workspace.create_branch("agent-a", "change-schema")
@@ -172,7 +172,7 @@ The second call waits for the resource to become available and raises an error o
 The persistent wrapper is currently imported from its module rather than the package root:
 
 ```python
-from actrun.persistence import PersistentWorkspace
+from cerbere_cohort.persistence import PersistentWorkspace
 
 with PersistentWorkspace("workspace.db") as workspace:
     branch = workspace.create_branch("agent-a", "task-1")
@@ -202,10 +202,10 @@ The Python API exposes structured events through `Workspace.get_events()`. Each 
 
 The JSONL exporter writes one serialized event per line.
 
-The Rust crate is named `actrun-trace`:
+The Rust crate is named `cerbere-cohort-trace`:
 
 ```bash
-cargo run -p actrun-trace -- example-trace.jsonl
+cargo run -p cerbere-cohort-trace -- example-trace.jsonl
 ```
 
 The Python event model, JSON Schema, sample JSONL log, and Rust parser now use the same `1.0.0` envelope. The Python reader and Rust parser also accept legacy records that omit `schema_version`, treating them as `1.0.0`. New events always serialize the version field. The current conflict metric is calculated as conflict events divided by successful plus aborted commit attempts. The analyzer remains an early prototype; run it against your own exported logs before depending on its metrics.
@@ -214,13 +214,13 @@ The Python event model, JSON Schema, sample JSONL log, and Rust parser now use t
 
 An early stdio MCP server is located in `integrations/mcp-server`. It exposes tools for reading workspace state, creating branches, writing to a branch, committing, acquiring and releasing leases, and reading events.
 
-The server package declares the `actrun-mcp` entry point. Install and run it from the integration directory after installing the local Python package:
+The server package declares the `cerbere-cohort-mcp` entry point. Install and run it from the integration directory after installing the local Python package:
 
 ```bash
 python -m pip install -e "./python"
 cd integrations/mcp-server
 python -m pip install -e .
-actrun-mcp
+cerbere-cohort-mcp
 ```
 
 The server currently keeps its workspace and branch registry in process memory. It is an early integration and has not been established as a durable, multi-user MCP service. Review the implementation and test it with your MCP client before relying on it.
@@ -248,7 +248,7 @@ flowchart TD
 ```text
 .
 ├── python/
-│   ├── src/actrun/          # Python coordination library
+│   ├── src/cerbere_cohort/          # Python coordination library
 │   └── tests/               # Python test suite
 ├── crates/
 │   └── actrun-trace/        # Rust JSONL trace CLI (prototype)
