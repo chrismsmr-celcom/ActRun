@@ -14,7 +14,6 @@ struct Args {
 }
 
 fn default_schema_version() -> String {
-    // Backward compatibility with JSONL records written before schema_version existed.
     "1.0.0".to_owned()
 }
 
@@ -38,6 +37,7 @@ struct Metrics {
     events_by_action: HashMap<String, usize>,
     events_by_agent: HashMap<String, usize>,
     total_commits: usize,
+    total_aborted: usize,
     total_branches: usize,
     total_conflicts: usize,
     total_leases_acquired: usize,
@@ -68,14 +68,8 @@ fn main() -> Result<()> {
             .with_context(|| format!("Erreur de parsing JSON ligne {}", line_num + 1))?;
 
         metrics.total_events += 1;
-        *metrics
-            .events_by_action
-            .entry(event.action.clone())
-            .or_insert(0) += 1;
-        *metrics
-            .events_by_agent
-            .entry(event.agent_id.clone())
-            .or_insert(0) += 1;
+        *metrics.events_by_action.entry(event.action.clone()).or_insert(0) += 1;
+        *metrics.events_by_agent.entry(event.agent_id.clone()).or_insert(0) += 1;
 
         if let Ok(ts) = DateTime::parse_from_rfc3339(&event.timestamp) {
             timestamps.push(ts.with_timezone(&Utc));
@@ -83,6 +77,7 @@ fn main() -> Result<()> {
 
         match event.action.as_str() {
             "workspace.commit" => metrics.total_commits += 1,
+            "coordination.aborted" => metrics.total_aborted += 1,
             "workspace.branch" => metrics.total_branches += 1,
             "coordination.conflict" | "merge.conflict_detected" => {
                 metrics.total_conflicts += 1;
@@ -93,9 +88,9 @@ fn main() -> Result<()> {
         }
     }
 
-    // A conflict event represents a rejected commit attempt. Include it in the
-    // denominator instead of dividing conflicts by successful commits only.
-    let commit_attempts = metrics.total_commits + metrics.total_conflicts;
+    // Each completed commit or aborted commit is one observed attempt.
+    // Conflict events are counted separately as the numerator.
+    let commit_attempts = metrics.total_commits + metrics.total_aborted;
     metrics.conflict_rate = if commit_attempts > 0 {
         metrics.total_conflicts as f64 / commit_attempts as f64 * 100.0
     } else {
@@ -126,9 +121,10 @@ fn generate_report(metrics: &Metrics) -> String {
     s.push_str(&format!("Événements totaux : {}\n", metrics.total_events));
     s.push_str(&format!("Agents uniques    : {}\n", metrics.events_by_agent.len()));
     s.push_str(&format!("Commits réussis   : {}\n", metrics.total_commits));
+    s.push_str(&format!("Commits abandonnés: {}\n", metrics.total_aborted));
     s.push_str(&format!("Branches créées   : {}\n", metrics.total_branches));
     s.push_str(&format!("Conflits détectés : {}\n", metrics.total_conflicts));
-    s.push_str(&format!("Taux de conflit   : {:.2}%\n", metrics.conflict_rate));
+    s.push_str(&format!("Conflits / essais : {:.2}%\n", metrics.conflict_rate));
     s.push_str(&format!("Overhead coord.   : {:.2}%\n", metrics.coordination_events_ratio));
 
     if let (Some(first), Some(last)) = (&metrics.first_event, &metrics.last_event) {
@@ -160,5 +156,18 @@ mod tests {
         let json = r#"{"event_id":"00000000-0000-0000-0000-000000000001","timestamp":"2026-11-15T10:00:00+00:00","agent_id":"agent-a","action":"workspace.commit","payload":{}}"#;
         let event: Event = serde_json::from_str(json).expect("legacy event should parse");
         assert_eq!(event.schema_version, "1.0.0");
+    }
+
+    #[test]
+    fn conflict_rate_uses_successful_and_aborted_attempts() {
+        let metrics = Metrics {
+            total_commits: 3,
+            total_aborted: 1,
+            total_conflicts: 1,
+            ..Metrics::default()
+        };
+        let attempts = metrics.total_commits + metrics.total_aborted;
+        let rate = metrics.total_conflicts as f64 / attempts as f64 * 100.0;
+        assert!((rate - 25.0).abs() < f64::EPSILON);
     }
 }
