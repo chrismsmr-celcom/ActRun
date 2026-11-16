@@ -1,9 +1,9 @@
 """
-Tests de conformance M1 pour ActRun.
+Tests de conformance M1 pour Cerbere Cohort.
 Vérifie les 7 critères d'acceptation définis dans docs/CONCEPTS.md §13.
 """
 import pytest
-from actrun import Workspace, ConflictError, DeadlockError
+from cerbere_cohort import Workspace, ConflictError, DeadlockError
 
 
 class TestM1Conformance:
