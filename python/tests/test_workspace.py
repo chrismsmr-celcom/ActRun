@@ -121,3 +121,26 @@ def test_commit_payload_reports_real_modified_keys_and_merge_type():
     assert commits[-2].payload["merge_type"] == "fast-forward"
     assert commits[-1].payload["merge_type"] == "auto-merge"
     assert commits[-1].payload["keys_modified"] == ["y"]
+
+
+def test_event_serialization_includes_schema_version():
+    import json
+    from actrun.events import ActRunEvent
+
+    event = ActRunEvent(agent_id="agent-a", action="workspace.commit")
+    serialized = json.loads(event.to_jsonl())
+
+    assert serialized["schema_version"] == "1.0.0"
+
+
+def test_legacy_event_without_schema_version_is_readable():
+    from actrun.events import ActRunEvent
+
+    legacy = (
+        '{"event_id":"00000000-0000-0000-0000-000000000001",'
+        '"timestamp":"2026-11-15T10:00:00+00:00",'
+        '"agent_id":"agent-a","action":"workspace.commit","payload":{}}'
+    )
+    event = ActRunEvent.from_jsonl(legacy)
+
+    assert event.schema_version == "1.0.0"
