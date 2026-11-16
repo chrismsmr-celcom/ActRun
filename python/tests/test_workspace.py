@@ -1,7 +1,7 @@
 """Critères de conformité v1 (docs/CONCEPTS.md §13) sur le modèle clé-valeur actuel."""
 import pytest
 
-from actrun import ConflictError, Workspace
+from cerbere_cohort import ConflictError, Workspace
 
 
 def seeded(**data):
@@ -125,22 +125,22 @@ def test_commit_payload_reports_real_modified_keys_and_merge_type():
 
 def test_event_serialization_includes_schema_version():
     import json
-    from actrun.events import ActRunEvent
+    from cerbere_cohort.events import CerbereCohortEvent
 
-    event = ActRunEvent(agent_id="agent-a", action="workspace.commit")
+    event = CerbereCohortEvent(agent_id="agent-a", action="workspace.commit")
     serialized = json.loads(event.to_jsonl())
 
     assert serialized["schema_version"] == "1.0.0"
 
 
 def test_legacy_event_without_schema_version_is_readable():
-    from actrun.events import ActRunEvent
+    from cerbere_cohort.events import CerbereCohortEvent
 
     legacy = (
         '{"event_id":"00000000-0000-0000-0000-000000000001",'
         '"timestamp":"2026-11-15T10:00:00+00:00",'
         '"agent_id":"agent-a","action":"workspace.commit","payload":{}}'
     )
-    event = ActRunEvent.from_jsonl(legacy)
+    event = CerbereCohortEvent.from_jsonl(legacy)
 
     assert event.schema_version == "1.0.0"
