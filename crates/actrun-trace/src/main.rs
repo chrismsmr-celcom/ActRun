@@ -9,7 +9,7 @@ use std::io::{BufRead, BufReader};
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Args {
-    /// Fichier JSONL d'entrée contenant les événements ActRun
+    /// Fichier JSONL d'entrée contenant les événements Cerbere Cohort
     input: String,
 }
 
@@ -131,7 +131,7 @@ fn main() -> Result<()> {
 
 fn generate_report(metrics: &Metrics) -> String {
     let mut s = String::new();
-    s.push_str("📊 Rapport d'analyse ActRun\n");
+    s.push_str("📊 Rapport d'analyse Cerbere Cohort\n");
     s.push_str("========================\n");
     s.push_str(&format!("Événements totaux : {}\n", metrics.total_events));
     s.push_str(&format!(
