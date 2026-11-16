@@ -11,8 +11,8 @@ If you run several agents against shared state, please open a [multi-agent failu
 ## Ways to contribute
 
 - **Report failures** you have hit with multi-agent systems.
-- **Challenge the design.** If part of the direction in the README looks wrong, open an issue and say so.
-- **Fix bugs and add tests.** The prototype is small and test coverage is thin.
+- **Challenge the design.** If part of [`docs/CONCEPTS.md`](docs/CONCEPTS.md) looks wrong, open an issue and say so.
+- **Fix bugs and add tests.** The prototype is small. A failing test that reproduces a bug is a great contribution on its own.
 - **Improve the docs.** Anything unclear, outdated, or overclaiming is a good first contribution.
 - **Build features** from the [roadmap](README.md#roadmap), after discussing them first (see below).
 
@@ -24,6 +24,7 @@ For anything larger than a small fix, **open an issue first**. This applies in p
 
 - a new public API or a change to an existing one,
 - any change to the event schema,
+- any change to merge or conflict semantics (these must match `docs/CONCEPTS.md`, or change it in the same pull request),
 - a new dependency,
 - a new component or language boundary (Python vs Rust).
 
@@ -31,7 +32,7 @@ This avoids wasted work on a direction the project cannot accept.
 
 ## Development setup
 
-Requirements: Python 3.10+, Git, and the Rust toolchain (stable) for the trace engine.
+Requirements: Python 3.10+, Git, and the Rust toolchain (stable) for the trace analyzer.
 
 ```bash
 git clone https://github.com/chrismsmr-celcom/ActRun.git
@@ -42,8 +43,8 @@ cd python
 python -m pip install -e ".[dev]"
 pytest
 
-# Rust
-cd ../rust/trace-engine
+# Rust (from the repository root)
+cd ..
 cargo test
 ```
 
@@ -51,17 +52,17 @@ cargo test
 
 ```
 ActRun/
-├── python/                  Python runtime and evaluation (package: agent_harness)
-│   ├── src/agent_harness/
-│   └── tests/
-├── rust/trace-engine/       Rust trace engine (reads JSONL events)
-├── example-trace.jsonl      Sample event log used by the Rust engine
-├── README.md
-├── CONTRIBUTING.md
-└── SECURITY.md
+├── python/
+│   ├── src/actrun/          Library: workspace, merge, leases, deadlock, persistence, events
+│   └── tests/               pytest suite
+├── crates/actrun-trace/     Rust trace analyzer (reads JSONL events)
+├── schemas/                 Event schema (draft)
+├── docs/CONCEPTS.md         Semantics and acceptance criteria (the reference)
+├── examples/                Runnable scenarios
+├── integrations/mcp-server/ MCP server (draft)
+├── example-trace.jsonl      Sample event log used by the Rust analyzer
+└── README.md, CONTRIBUTING.md, SECURITY.md
 ```
-
-The Python package is still named `open-agent-harness` and will be renamed to `actrun`. Please do not rely on the current import name in new documentation.
 
 ## Checks
 
@@ -71,10 +72,11 @@ CI runs the same commands. Please run them locally before opening a pull request
 # Python (from python/)
 pytest
 
-# Rust (from rust/trace-engine/)
+# Rust (from the repository root)
 cargo fmt --check
 cargo clippy --all-targets
 cargo test
+cargo run -p actrun-trace -- example-trace.jsonl
 ```
 
 Run `cargo fmt` to fix formatting automatically.
@@ -85,13 +87,16 @@ Run `cargo fmt` to fix formatting automatically.
 
 - Keep the core small. A new dependency needs a justification in the pull request.
 - Every behavior change comes with a test. Every bug fix comes with a regression test.
-- Keep the core provider-neutral: no model-vendor-specific code in the runtime.
+- `docs/CONCEPTS.md` is the reference for semantics. Code and docs must not disagree: if you change one, change the other.
+- Keep the core provider-neutral: no model-vendor-specific code.
 
 **Python**
 
 - Python 3.10+ compatible.
 - Type hints on all public functions and classes.
-- The runtime is async-first.
+- Tests are real tests: they assert behavior. No scripts that only print.
+- Concurrency tests must use timeouts and never rely on long sleeps.
+- Never mutate a snapshot's data in place. State changes go through branches and commits.
 
 **Rust**
 
@@ -100,16 +105,17 @@ Run `cargo fmt` to fix formatting automatically.
 
 ## Event schema changes
 
-Events are written to JSONL and read by the Rust engine, so the event format is a versioned contract. A change to it must:
+Events are written to JSONL and read by the Rust analyzer, so the event format is a contract. A change to it must:
 
-1. bump `schema_version`,
+1. update `schemas/event.v1.schema.json`,
 2. update `example-trace.jsonl`,
-3. update the Rust trace engine and its tests,
-4. be described in the pull request, including whether old logs remain readable.
+3. update the Python event emitters and the Rust analyzer, with tests,
+4. bump `schema_version` once that field exists (it is planned for milestone M1),
+5. be described in the pull request, including whether old logs remain readable.
 
 ## Documentation must not overclaim
 
-ActRun's README separates what exists from what is planned. Keep it that way. Do not describe a planned feature as implemented, and mark design sketches as sketches. Contributions that blur this line will be asked to change.
+The README separates what exists from what is planned. Keep it that way. Do not describe a planned feature as implemented, and mark design sketches as sketches. Contributions that blur this line will be asked to change.
 
 ## Commits and pull requests
 
