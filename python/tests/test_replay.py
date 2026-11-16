@@ -4,7 +4,7 @@ import threading
 
 import pytest
 
-from actrun import (ActRunEvent, ConflictError, ContentError, ReplayError, Workspace,
+from cerbere_cohort import (CerbereCohortEvent, ConflictError, ContentError, ReplayError, Workspace,
                     canonical_json, content_hash, snapshot_id)
 
 
@@ -132,7 +132,7 @@ def test_replay_keeps_the_log_and_can_continue_the_chain():
 
 def test_replay_does_not_need_the_original_objects_in_memory():
     ws = scenario(Workspace())
-    from actrun import ContentStore
+    from cerbere_cohort import ContentStore
     fresh = ContentStore()
     for digest, text in ws.store.dump().items():
         fresh.load_text(digest, text)
@@ -143,7 +143,7 @@ def _tamper(events, predicate, **payload_changes):
     out = []
     for e in events:
         if e.action == "workspace.commit" and predicate(e):
-            e = ActRunEvent(**{**e.model_dump(), "payload": {**e.payload, **payload_changes}})
+            e = CerbereCohortEvent(**{**e.model_dump(), "payload": {**e.payload, **payload_changes}})
         out.append(e)
     return out
 
@@ -167,7 +167,7 @@ def test_replay_detects_tampered_content():
 
 def test_replay_detects_missing_object_and_broken_chain():
     ws = scenario(Workspace())
-    from actrun import ContentStore
+    from cerbere_cohort import ContentStore
     with pytest.raises(ReplayError, match="manquant"):
         Workspace.replay(ws.get_events(), ContentStore())
     commits = [e for e in ws.get_events() if e.action == "workspace.commit"]
@@ -177,7 +177,7 @@ def test_replay_detects_missing_object_and_broken_chain():
 
 
 def test_replay_rejects_logs_from_before_the_replayable_format():
-    old = ActRunEvent(agent_id="A", action="workspace.commit",
+    old = CerbereCohortEvent(agent_id="A", action="workspace.commit",
                       payload={"version_id": "x", "parent_version": None, "merge_type": "fast-forward"})
     with pytest.raises(ReplayError, match="format antérieur"):
         Workspace.replay([old], Workspace().store)
