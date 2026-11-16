@@ -1,6 +1,7 @@
 <div align="center">
 
-# ActRun
+# cerbere-cohort
+
 
 **Shared state and coordination for multi-agent systems.**
 
@@ -9,11 +10,11 @@ Branches, conflict detection, leases and an append-only event log, so your agent
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Status: early development](https://img.shields.io/badge/status-early%20development-orange.svg)](#status)
 [![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-3776AB.svg)](python/)
-[![Trace analyzer: Rust](https://img.shields.io/badge/trace%20analyzer-Rust-000000.svg)](crates/actrun-trace/)
+[![Trace analyzer: Rust](https://img.shields.io/badge/trace%20analyzer-Rust-000000.svg)](crates/cerbere-cohort-trace/)
 
 </div>
 
-> **Early development.** ActRun is an experimental prototype. The [Status](#status) table says exactly what works today and what does not. APIs and the event format will change.
+> **Early development.** cerbere-cohort is an experimental prototype. The [Status](#status) table says exactly what works today and what does not. APIs and the event format will change.
 
 ---
 
@@ -25,9 +26,9 @@ One agent writing to a codebase, a database or a document works fine. Put three 
 - Agents duplicate effort, loop, or wait on each other forever.
 - Something goes wrong and nobody can say **which agent changed what, when, and why**.
 
-Agent frameworks help you *define* agents and workflows. Very little exists for what happens when several agents **share mutable state**. That is the gap ActRun explores.
+Agent frameworks help you *define* agents and workflows. Very little exists for what happens when several agents **share mutable state**. That is the gap cerbere-cohort explores.
 
-## What ActRun is
+## What cerbere-cohort is
 
 A small, framework-agnostic coordination layer between your agents and the state they share:
 
@@ -39,12 +40,12 @@ A small, framework-agnostic coordination layer between your agents and the state
 | **Append-only event log** | Every branch, commit, conflict and lease is recorded as a structured event, with the agent that caused it. |
 | **Trace analysis** | A Rust tool computes coordination metrics (conflict rate, coordination overhead) from the event log. |
 
-ActRun is designed to sit **alongside** your agent framework, not replace it.
+cerbere-cohort is designed to sit **alongside** your agent framework, not replace it.
 
 ## Quick look
 
 ```python
-from actrun import Workspace, ConflictError
+from cerbere-cohort import Workspace, ConflictError
 
 ws = Workspace()
 a = ws.create_branch("agent-a", "draft-a")
@@ -97,8 +98,8 @@ Two things to know before you rely on it:
 Requirements: Python 3.10+. Rust (stable) only if you want the trace analyzer.
 
 ```bash
-git clone https://github.com/chrismsmr-celcom/ActRun.git
-cd ActRun
+git clone https://github.com/chrismsmr-celcom/cerbere-cohort.git
+cd cerbere-cohort
 
 # Python: install, run the tests, run the demo
 cd python
@@ -108,14 +109,14 @@ python ../examples/01_two_agents_conflict/run.py
 
 # Rust trace analyzer (from the repository root)
 cd ..
-cargo run -p actrun-trace -- example-trace.jsonl
+cargo run -p cerbere-cohort-trace -- example-trace.jsonl
 ```
 
 You can export a real run with `PersistentWorkspace.export_events_jsonl("run.jsonl")` and feed it to the analyzer.
 
 Event payloads may contain application data. Do not write secrets or sensitive production data to event logs without your own redaction and access controls.
 
-## What ActRun is not
+## What cerbere-cohort is not
 
 - **Not an agent framework.** It does not define your agents or workflows.
 - **Not a model provider or adapter collection.**
@@ -136,7 +137,7 @@ flowchart LR
     A2 --> API
     A3 --> API
     API["Python SDK / MCP server"] --> CORE
-    subgraph CORE["ActRun core (Python today)"]
+    subgraph CORE["cerbere-cohort core (Python today)"]
         WS["Branches and snapshots"]
         CR["Conflict detection"]
         LE["Leases and deadlock detection"]
@@ -167,14 +168,14 @@ Items may change based on testing and feedback.
 
 The most valuable contribution right now is **evidence**. If you run several agents against shared state, tell us what actually breaks:
 
-- Open a [multi-agent failure report](https://github.com/chrismsmr-celcom/ActRun/issues/new?template=multi_agent_failure.yml): two agents clobbering each other, a deadlock, a run you could not reproduce.
+- Open a [multi-agent failure report](https://github.com/chrismsmr-celcom/cerbere-cohort/issues/new?template=multi_agent_failure.yml): two agents clobbering each other, a deadlock, a run you could not reproduce.
 - Challenge the design. If a piece of [`CONCEPTS.md`](docs/CONCEPTS.md) is wrong, say so.
 
 Code contributions are welcome too. Please read [CONTRIBUTING.md](CONTRIBUTING.md) first.
 
 ## Security
 
-ActRun is experimental software. Please read [SECURITY.md](SECURITY.md) before reporting a vulnerability or using it in a sensitive environment.
+cerbere-cohort is experimental software. Please read [SECURITY.md](SECURITY.md) before reporting a vulnerability or using it in a sensitive environment.
 
 ## License
 
