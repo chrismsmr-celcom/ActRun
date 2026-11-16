@@ -14,13 +14,13 @@ struct Args {
 }
 
 #[derive(Deserialize, Debug)]
+#[allow(dead_code)]
 struct Event {
     schema_version: String,
     event_id: String,
     timestamp: String,
     agent_id: String,
     action: String,
-    #[allow(dead_code)]
     payload: serde_json::Value,
 }
 
@@ -159,6 +159,6 @@ fn generate_report(metrics: &Metrics) -> String {
         );
     }
 
-    s.push_str("\n");
+    s.push('\n'); // <-- Caractère unique avec des simples guillemets
     s
 }
