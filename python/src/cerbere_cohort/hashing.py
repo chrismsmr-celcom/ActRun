@@ -68,4 +68,4 @@ def snapshot_id(entries: Mapping[str, str], parents: Sequence[str]) -> str:
         {"entries": dict(sorted(entries.items())), "parents": list(parents)},
         sort_keys=True, ensure_ascii=False, separators=(",", ":"),
     )
-    return hash_text("cerbere_cohort.snapshot.v1\n" + body)
+    return hash_text("actrun.snapshot.v1\n" + body)
