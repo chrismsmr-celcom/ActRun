@@ -251,7 +251,7 @@ flowchart TD
 │   ├── src/cerbere_cohort/          # Python coordination library
 │   └── tests/               # Python test suite
 ├── crates/
-│   └── actrun-trace/        # Rust JSONL trace CLI (prototype)
+│   └── cerbere-cohort-trace/        # Rust JSONL trace CLI (prototype)
 ├── integrations/
 │   └── mcp-server/          # Experimental stdio MCP server
 ├── schemas/                 # Event schema draft
