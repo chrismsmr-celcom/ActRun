@@ -1,133 +1,117 @@
-# cerbere_cohort MCP Server
+# Cerbere Cohort MCP Server
 
-Serveur MCP qui expose les outils de coordination cerbere_cohort à n'importe quel LLM compatible (Claude, GPT, etc.).
+Cerbere Cohort exposes shared workspace coordination to MCP-compatible coding
+agents. Run **one server process** and connect multiple clients to the same
+Streamable HTTP endpoint. The server serializes workspace mutations and stores
+committed state, leases, events, and open branches in SQLite.
 
-## Installation
+## What it provides
+
+- Shared committed workspace state and versioned HEAD.
+- Isolated branches per `agent_id` and `branch_name`.
+- Branch reads, writes, and deletes.
+- Conflict-aware commits: overlapping edits are rejected rather than silently
+  overwriting another agent's changes; disjoint edits can merge.
+- SQLite persistence, including unfinished branch state across server restarts.
+- Resource leases and an append-only event log.
+- Streamable HTTP for multiple clients, plus stdio for single-client setups.
+
+## Requirements
+
+- Python 3.10+
+- An MCP-compatible client
+- One local checkout of this repository
+
+## Install from the repository root
+
+Install the Python library and MCP server in editable mode:
 
 ```bash
-cd integrations/mcp-server
-pip install -e .
+python -m pip install -e ./python
+python -m pip install -e ./integrations/mcp-server
+```
 
-Configuration dans Claude Desktop
-Ajoute ceci dans ton fichier de configuration Claude Desktop :
-macOS : ~/Library/Application Support/Claude/claude_desktop_config.json
-Windows : %APPDATA%\Claude\claude_desktop_config.json
+## Start the shared server
 
-{
-  "mcpServers": {
-    "cerbere_cohort": {
-      "command": "python",
-      "args": ["-m", "mcp_server"],
-      "cwd": "/chemin/vers/cerbere_cohort/integrations/mcp-server/src"
-    }
-  }
-}
+```bash
+cerbere-cohort-mcp --transport streamable-http
+```
 
-Configuration dans Cursor
-Dans .cursor/mcp.json :
+Default endpoint:
 
-{
-  "mcpServers": {
-    "cerbere_cohort": {
-      "command": "python",
-      "args": ["-m", "mcp_server"],
-      "cwd": "/chemin/vers/cerbere_cohort/integrations/mcp-server/src"
-    }
-  }
-}
+```text
+http://127.0.0.1:8765/mcp
+```
 
-Outils disponibles
+The default database is `~/.cerbere-cohort/workspace.db`. Configure it with
+`COHORT_DB_PATH` or `--db`.
 
-Tool
-Description
-workspace_get_state
-Lit l'état actuel du workspace
-workspace_create_branch
-Crée une branche isolée
-workspace_set_in_branch
-Modifie une clé dans une branche
-workspace_commit
-Valide les modifications
-lease_acquire
-Réserve une ressource
-lease_release
-Libère une ressource
-get_events
-Consulte le journal d'événements
-Exemple d'utilisation
-Demande à Claude :
-"Je suis l'agent marketing. Crée une branche, réserve le budget, et mets-le à 15000."
-Claude appellera automatiquement :
-workspace_create_branch(agent_id="marketing", branch_name="...")
-lease_acquire(agent_id="marketing", resource_key="budget")
-workspace_set_in_branch(..., key="budget", value=15000)
+Useful options:
 
+```bash
+cerbere-cohort-mcp --help
+cerbere-cohort-mcp --db ./data/cohort.db --host 127.0.0.1 --port 8765
+```
 
-#### 4. Script de test local
-Crée `integrations/mcp-server/test_mcp.py` pour vérifier que le serveur démarre sans erreur :
+Keep the server running while clients are connected. Point Cursor, Codex,
+Mistral Code, or another MCP client at the same endpoint. Client configuration
+syntax varies; use its Streamable HTTP MCP transport and the URL above.
 
-```python
-"""Test rapide pour vérifier que le serveur MCP se lance correctement."""
-import subprocess
-import sys
-import json
-import time
+**Important:** the server has no authentication layer in this release. It binds
+to loopback by default. Do not expose it to a LAN, public interface, or the
+internet. Remote multi-user access requires authentication and authorization
+before changing the bind address.
 
-def test_server_starts():
-    """Vérifie que le serveur démarre et répond à une requête initialize."""
-    proc = subprocess.Popen(
-        [sys.executable, "-m", "mcp_server"],
-        stdin=subprocess.PIPE,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        cwd="src"
-    )
-    
-    try:
-        # Envoyer une requête initialize JSON-RPC
-        init_request = {
-            "jsonrpc": "2.0",
-            "id": 1,
-            "method": "initialize",
-            "params": {
-                "protocolVersion": "2024-11-05",
-                "capabilities": {},
-                "clientInfo": {"name": "test-client", "version": "1.0"}
-            }
-        }
-        
-        proc.stdin.write(json.dumps(init_request) + "\n")
-        proc.stdin.flush()
-        
-        # Lire la réponse (timeout 5s)
-        import select
-        ready, _, _ = select.select([proc.stdout], [], [], 5.0)
-        
-        if ready:
-            response = proc.stdout.readline()
-            print("✅ Le serveur répond !")
-            print(f"   Réponse : {response.strip()}")
-            return True
-        else:
-            print("❌ Timeout : le serveur ne répond pas")
-            return False
-            
-    finally:
-        proc.terminate()
-        proc.wait(timeout=2)
+## MCP tools
 
+| Tool | Purpose |
+| --- | --- |
+| `workspace_get_state` | Read committed state and HEAD version |
+| `workspace_create_branch` | Create an isolated branch |
+| `workspace_read_in_branch` | Read a key from a branch |
+| `workspace_set_in_branch` | Set a JSON value in a branch |
+| `workspace_delete_in_branch` | Delete a key in a branch |
+| `workspace_commit` | Commit a branch with conflict detection |
+| `lease_acquire` | Acquire a time-limited resource lease |
+| `lease_release` | Release a lease owned by an agent |
+| `get_events` | Read recent coordination events |
 
-if __name__ == "__main__":
-    success = test_server_starts()
-    sys.exit(0 if success else 1)
+### Recommended agent workflow
 
-    🛠️ Installation et test
+1. Choose a stable, unique `agent_id` (for example, `cursor` or `codex`).
+2. Create a branch before editing shared state.
+3. Read the keys you intend to change.
+4. Write changes to that branch; do not write directly to HEAD.
+5. Commit when the work is ready.
+6. If the commit reports a conflict, read the latest HEAD and reconcile
+   explicitly. Do not blindly retry with stale values.
 
-    # 1. Installer le package MCP
-cd integrations/mcp-server
-pip install -e .
+Example tool sequence:
 
-# 2. Vérifier que le serveur démarre
-python test_mcp.py
+```text
+workspace_create_branch(agent_id="cursor", branch_name="auth-refactor")
+workspace_read_in_branch(agent_id="cursor", branch_name="auth-refactor", key="architecture")
+workspace_set_in_branch(agent_id="cursor", branch_name="auth-refactor", key="architecture", value={"owner": "cursor"})
+workspace_commit(agent_id="cursor", branch_name="auth-refactor")
+```
 
+## Stdio mode
+
+Stdio starts an independent server process and is suitable for one MCP client.
+It does **not** provide shared state between separate client-launched processes.
+
+```bash
+cerbere-cohort-mcp --transport stdio
+```
+
+For coordination between multiple agents, use one shared Streamable HTTP server.
+
+## Current scope and limitations
+
+- This release coordinates clients sharing one server process and one local
+  SQLite database on a single machine.
+- It is not a distributed multi-host coordination service.
+- The server serializes its own tool operations. Do not open the same database
+  from multiple independent server processes.
+- Leases are time-limited coordination primitives, not a security boundary.
+- The MCP endpoint is unauthenticated; keep it on loopback.
