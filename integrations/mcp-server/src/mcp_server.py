@@ -15,8 +15,6 @@ from typing import Any
 
 from mcp.server.fastmcp import FastMCP
 
-from cerbere_cohort.lease import LeaseError
-from cerbere_cohort.merge import ConflictError
 from cerbere_cohort.persistence import PersistentWorkspace
 from cerbere_cohort.workspace import Branch
 
@@ -82,6 +80,7 @@ class CohortService:
                 branch.current_data = json.loads(row["current_data_json"])
                 branch.intents = json.loads(row["intents_json"])
                 self._branches[key] = branch
+            self._db.commit()
 
     def _persist_branch(self, agent_id: str, branch: Branch) -> None:
         self._db.execute(
