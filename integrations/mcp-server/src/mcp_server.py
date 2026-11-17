@@ -8,6 +8,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sqlite3
 import threading
 from pathlib import Path
 from typing import Any
@@ -27,10 +28,8 @@ class CohortService:
         self.db_path = Path(db_path).expanduser()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.workspace = PersistentWorkspace(self.db_path)
-        self._db = __import__("sqlite3").connect(
-            str(self.db_path), check_same_thread=False
-        )
-        self._db.row_factory = __import__("sqlite3").Row
+        self._db = sqlite3.connect(str(self.db_path), check_same_thread=False)
+        self._db.row_factory = sqlite3.Row
         self._lock = threading.RLock()
         self._db.execute(
             """
@@ -194,8 +193,8 @@ class CohortService:
             self._db.close()
 
 
-def create_server(service: CohortService) -> FastMCP:
-    mcp = FastMCP("cerbere-cohort")
+def create_server(service: CohortService, host: str = "127.0.0.1", port: int = 8765) -> FastMCP:
+    mcp = FastMCP("cerbere-cohort", host=host, port=port)
 
     @mcp.tool()
     def workspace_get_state() -> dict[str, Any]:
@@ -270,12 +269,10 @@ def main() -> None:
     args = parser.parse_args()
 
     service = CohortService(args.db)
-    mcp = create_server(service)
+    mcp = create_server(service, host=args.host, port=args.port)
     if args.transport == "stdio":
         mcp.run(transport="stdio")
     else:
-        mcp.settings.host = args.host
-        mcp.settings.port = args.port
         mcp.run(transport="streamable-http")
 
 
