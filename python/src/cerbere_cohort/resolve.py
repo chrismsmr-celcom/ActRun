@@ -9,9 +9,12 @@ sans jamais rappeler le résolveur.
 from dataclasses import dataclass
 from typing import Any, Callable, Optional, Sequence
 
+from .errors import CerbereError
 
-class ResolutionError(Exception):
+
+class ResolutionError(CerbereError):
     """Le résolveur a levé une exception ou rendu une décision invalide."""
+    code = "resolution_error"
 
 
 @dataclass(frozen=True)

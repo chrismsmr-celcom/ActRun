@@ -4,11 +4,16 @@ import threading
 from dataclasses import dataclass
 from typing import Dict, Optional, List
 from .events import CerbereCohortEvent
+from .errors import CerbereError
 from .deadlock import WaitForGraph, DeadlockCycle, DeadlockError
 
-class LeaseError(Exception):
-    """Exception levée lorsqu'un agent tente d'acquérir une ressource déjà verrouillée."""
-    pass
+class LeaseError(CerbereError):
+    """Exception levée lorsqu'un agent tente de violer l'exclusivité d'un verrou.
+
+    Codes stables selon le point de levée : lease_held, lease_wait_timeout,
+    lease_not_owner, lease_required.
+    """
+    code = "lease_error"
 
 @dataclass
 class Lease:
@@ -73,7 +78,13 @@ class LeaseManager:
                     if not wait:
                         raise LeaseError(
                             f"Ressource '{resource_key}' déjà verrouillée par "
-                            f"'{existing.agent_id}' jusqu'à {existing.expires_at:.2f}"
+                            f"'{existing.agent_id}' jusqu'à {existing.expires_at:.2f}",
+                            code="lease_held",
+                            details={
+                                "resource_key": resource_key,
+                                "holder": existing.agent_id,
+                                "expires_at": existing.expires_at,
+                            },
                         )
 
                     # (re)déclare l'attente : le détenteur a pu changer entre deux tours
@@ -81,12 +92,24 @@ class LeaseManager:
                     self._wait_for_graph.add_wait(agent_id, existing.agent_id, resource_key)
                     cycle = self._wait_for_graph.detect_cycle()
                     if cycle:
-                        raise DeadlockError(f"Deadlock détecté : {cycle}")
+                        raise DeadlockError(
+                            f"Deadlock détecté : {cycle}",
+                            details={
+                                "cycle": list(cycle.cycle),
+                                "resources": list(cycle.resources),
+                            },
+                        )
 
                     if time.monotonic() >= deadline:
                         raise LeaseError(
                             f"Timeout après {timeout_seconds}s en attendant "
-                            f"'{resource_key}' (détenu par '{existing.agent_id}')"
+                            f"'{resource_key}' (détenu par '{existing.agent_id}')",
+                            code="lease_wait_timeout",
+                            details={
+                                "resource_key": resource_key,
+                                "holder": existing.agent_id,
+                                "timeout_seconds": timeout_seconds,
+                            },
                         )
                 time.sleep(0.02)  # verrou relâché pendant la pause
         finally:
@@ -126,7 +149,13 @@ class LeaseManager:
             if lease.agent_id != agent_id:
                 raise LeaseError(
                     f"L'agent '{agent_id}' ne peut pas libérer le verrou de "
-                    f"'{resource_key}' détenu par '{lease.agent_id}'"
+                    f"'{resource_key}' détenu par '{lease.agent_id}'",
+                    code="lease_not_owner",
+                    details={
+                        "agent_id": agent_id,
+                        "resource_key": resource_key,
+                        "holder": lease.agent_id,
+                    },
                 )
             
             del self._active_leases[resource_key]

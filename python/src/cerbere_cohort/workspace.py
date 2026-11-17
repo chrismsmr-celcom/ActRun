@@ -7,14 +7,16 @@ from types import MappingProxyType
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Tuple
 
 from .events import CerbereCohortEvent
+from .errors import CerbereError
 from .hashing import ContentError, canonical_json, content_hash, hash_text, snapshot_id
 from .lease import LeaseError, LeaseManager
 from .merge import ConflictError, detect_and_merge
 from .resolve import Conflict, Resolution, ResolutionError, Resolver, Side
 
 
-class ReplayError(Exception):
+class ReplayError(CerbereError):
     """Le journal ne permet pas de reconstruire fidèlement l'état."""
+    code = "replay_error"
 
 
 class ContentStore:
@@ -39,7 +41,10 @@ class ContentStore:
     def load_text(self, digest: str, text: str) -> None:
         """Charge un objet persisté en vérifiant que son hash correspond."""
         if hash_text(text) != digest:
-            raise ReplayError(f"objet corrompu : le contenu ne correspond pas au hash {digest[:12]}")
+            raise ReplayError(
+                f"objet corrompu : le contenu ne correspond pas au hash {digest[:12]}",
+                details={"digest": digest},
+            )
         self._objects.setdefault(digest, text)
 
     def dump(self) -> Dict[str, str]:
@@ -86,7 +91,13 @@ class Branch:
         if self._require_leases and not self._lease_manager.check_lease(self._agent_id, key):
             raise LeaseError(
                 f"L'agent '{self._agent_id}' doit acquérir un lease sur '{key}' "
-                f"avant de pouvoir le {verb}."
+                f"avant de pouvoir le {verb}.",
+                code="lease_required",
+                details={
+                    "agent_id": self._agent_id,
+                    "key": key,
+                    "operation": verb,
+                },
             )
 
     def _put(self, key: str, value: Any) -> None:
@@ -184,6 +195,9 @@ class Workspace:
                         f"Conflit détecté lors du commit de l'agent {agent_id}. "
                         f"Les clés suivantes ont été modifiées simultanément : {result.conflicting_keys}",
                         conflicting_keys=result.conflicting_keys,
+                        branch_name=branch.name,
+                        base_version=branch.base_version,
+                        head_version=head.version_id,
                     )
 
             decisions = self._decide(agent_id, branch, head, resolver, conflicts)  # hors verrou
@@ -199,6 +213,8 @@ class Workspace:
         raise ConflictError(
             f"HEAD a changé {max_retries + 1} fois pendant la résolution : commit annulé, rien n'a été écrasé.",
             conflicting_keys=[],
+            code="conflict_head_moved",
+            attempts=max_retries + 1,
         )
 
     def _build_conflict(self, key: str, agent_id: str, branch: Branch, base: Snapshot,
@@ -243,7 +259,10 @@ class Workspace:
                                 "resolver_error", error=repr(exc))
                 if isinstance(exc, ResolutionError):
                     raise
-                raise ResolutionError(f"résolveur '{resolver.name}' en échec sur '{conflict.key}' : {exc!r}") from exc
+                raise ResolutionError(
+                    f"résolveur '{resolver.name}' en échec sur '{conflict.key}' : {exc!r}",
+                    details={"key": conflict.key, "resolver": resolver.name, "cause": repr(exc)},
+                ) from exc
             if decision is None:
                 unresolved.append(conflict.key)
             else:
@@ -254,6 +273,11 @@ class Workspace:
             raise ConflictError(
                 f"Conflit non résolu par '{resolver.name}' pour : {unresolved}. Rien n'a été écrasé.",
                 conflicting_keys=unresolved,
+                code="conflict_unresolved",
+                unresolvable_keys=unresolved,
+                resolver=resolver.name,
+                branch_name=branch.name,
+                head_version=head.version_id,
             )
         return decisions
 

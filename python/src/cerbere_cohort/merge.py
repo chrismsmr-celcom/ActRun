@@ -2,15 +2,26 @@
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
+from .errors import CerbereError
+
 _ABSENT = object()  # distingue "clé absente" de "valeur None"
 
 
-class ConflictError(Exception):
-    """Levée lorsque des modifications concurrentes divergent sur les mêmes clés."""
+class ConflictError(CerbereError):
+    """Levée lorsque des modifications concurrentes divergent sur les mêmes clés.
 
-    def __init__(self, message: str, conflicting_keys: List[str]):
-        super().__init__(message)
-        self.conflicting_keys = conflicting_keys
+    Codes stables selon le point de levée : conflict_detected,
+    conflict_unresolved, conflict_head_moved. Les clés en conflit restent
+    lisibles sur l'attribut `conflicting_keys` ET dans `details`.
+    """
+
+    code = "conflict_detected"
+
+    def __init__(self, message: str = "", conflicting_keys: Optional[List[str]] = None,
+                 code: Optional[str] = None, **details: Any):
+        self.conflicting_keys: List[str] = list(conflicting_keys or [])
+        details.setdefault("conflicting_keys", list(self.conflicting_keys))
+        super().__init__(message, details=details, code=code)
 
 
 @dataclass

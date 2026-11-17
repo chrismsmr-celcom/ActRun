@@ -1,6 +1,7 @@
 """Cerbere Cohort : Couche de coordination pour systèmes multi-agents"""
 
 from .events import CerbereCohortEvent
+from .errors import CerbereError
 from .hashing import ContentError, canonical_json, content_hash, snapshot_id
 from .workspace import Workspace, Snapshot, Branch, ContentStore, ReplayError
 from .resolve import (Conflict, Side, Resolution, Resolver, ResolutionError, PreferBranch,
@@ -11,7 +12,7 @@ from .deadlock import WaitForGraph, DeadlockCycle, DeadlockError
 
 __version__ = "0.1.0"
 __all__ = [
-    "CerbereCohortEvent", "Workspace", "Snapshot", "Branch", "ContentStore", "ReplayError",
+    "CerbereCohortEvent", "CerbereError", "Workspace", "Snapshot", "Branch", "ContentStore", "ReplayError",
     "Conflict", "Side", "Resolution", "Resolver", "ResolutionError", "PreferBranch",
     "PreferHead", "PreferAgent", "CallbackResolver", "ResolverChain",
     "ContentError", "canonical_json", "content_hash", "snapshot_id",

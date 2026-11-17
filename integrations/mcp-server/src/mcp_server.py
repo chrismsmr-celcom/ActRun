@@ -6,6 +6,7 @@ SQLite-backed workspace. Bind to loopback unless an authenticated proxy is used.
 from __future__ import annotations
 
 import argparse
+import functools
 import json
 import os
 import sqlite3
@@ -14,9 +15,43 @@ from pathlib import Path
 from typing import Any
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.fastmcp.exceptions import ToolError
 
+from cerbere_cohort.errors import CerbereError
 from cerbere_cohort.persistence import PersistentWorkspace
 from cerbere_cohort.workspace import Branch
+
+
+def _error_envelope(exc: Exception) -> dict[str, Any]:
+    """Construit l'enveloppe structurée d'une erreur outil.
+
+    Les erreurs de domaine exposent leur code stable et leurs détails ;
+    toute autre exception est ramenée à un code générique, sans jamais
+    exposer une repr Python comme seule information.
+    """
+    if isinstance(exc, CerbereError):
+        return exc.to_dict()
+    if isinstance(exc, ValueError):
+        return {"code": "invalid_argument", "message": str(exc), "details": None}
+    return {"code": "internal_error", "message": str(exc), "details": None}
+
+
+def structured_tool_errors(fn):
+    """Convertit les exceptions de domaine en ToolError structuré (JSON dans le message).
+
+    Enveloppe : {"code": <code stable>, "message": <texte français d'origine>,
+    "details": {...}}. Le message reste analysable par un humain et le code
+    par un agent. Les exceptions FastMCP (validation d'arguments) ne passent
+    pas par ce chemin : elles sont gérées par le SDK.
+    """
+    @functools.wraps(fn)
+    def wrapper(*args: Any, **kwargs: Any):
+        try:
+            return fn(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 - frontière de transport MCP
+            raise ToolError(json.dumps(_error_envelope(exc), ensure_ascii=False)) from exc
+
+    return wrapper
 
 
 class CohortService:
@@ -210,21 +245,25 @@ def create_server(service: CohortService, host: str = "127.0.0.1", port: int = 8
     mcp = FastMCP("cerbere-cohort", host=host, port=port)
 
     @mcp.tool()
+    @structured_tool_errors
     def workspace_get_state() -> dict[str, Any]:
         """Return the current committed workspace state and HEAD version."""
         return service.get_state()
 
     @mcp.tool()
+    @structured_tool_errors
     def workspace_create_branch(agent_id: str, branch_name: str) -> dict[str, str]:
         """Create an isolated branch from the current HEAD before editing shared state."""
         return service.create_branch(agent_id, branch_name)
 
     @mcp.tool()
+    @structured_tool_errors
     def workspace_read_in_branch(agent_id: str, branch_name: str, key: str) -> dict[str, Any]:
         """Read one key from an agent's isolated branch."""
         return service.read_branch(agent_id, branch_name, key)
 
     @mcp.tool()
+    @structured_tool_errors
     def workspace_set_in_branch(
         agent_id: str, branch_name: str, key: str, value: Any, intent: str | None = None
     ) -> dict[str, Any]:
@@ -232,6 +271,7 @@ def create_server(service: CohortService, host: str = "127.0.0.1", port: int = 8
         return service.write_branch(agent_id, branch_name, key, value, intent)
 
     @mcp.tool()
+    @structured_tool_errors
     def workspace_delete_in_branch(
         agent_id: str, branch_name: str, key: str, intent: str | None = None
     ) -> dict[str, Any]:
@@ -239,11 +279,13 @@ def create_server(service: CohortService, host: str = "127.0.0.1", port: int = 8
         return service.delete_branch_key(agent_id, branch_name, key, intent)
 
     @mcp.tool()
+    @structured_tool_errors
     def workspace_commit(agent_id: str, branch_name: str) -> dict[str, Any]:
         """Commit a branch. Conflicting concurrent edits are rejected, never silently overwritten."""
         return service.commit_branch(agent_id, branch_name)
 
     @mcp.tool()
+    @structured_tool_errors
     def lease_acquire(
         agent_id: str, resource_key: str, duration_seconds: float = 30.0
     ) -> dict[str, Any]:
@@ -251,11 +293,13 @@ def create_server(service: CohortService, host: str = "127.0.0.1", port: int = 8
         return service.acquire_lease(agent_id, resource_key, duration_seconds)
 
     @mcp.tool()
+    @structured_tool_errors
     def lease_release(agent_id: str, resource_key: str) -> dict[str, bool]:
         """Release a lease owned by the calling agent."""
         return service.release_lease(agent_id, resource_key)
 
     @mcp.tool()
+    @structured_tool_errors
     def get_events(limit: int = 50) -> list[dict[str, Any]]:
         """Read the latest append-only coordination events."""
         return service.get_events(limit)

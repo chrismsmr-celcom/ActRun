@@ -9,9 +9,12 @@ Algorithme : DFS avec détection de cycle (coloration).
 from typing import Dict, List, Set, Tuple
 from dataclasses import dataclass
 
+from .errors import CerbereError
 
-class DeadlockError(Exception):
+
+class DeadlockError(CerbereError):
     """Levée quand une attente créerait un cycle (deadlock)."""
+    code = "lease_deadlock"
 
 
 @dataclass

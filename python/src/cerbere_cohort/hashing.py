@@ -10,9 +10,12 @@ import json
 import math
 from typing import Any, Mapping, Sequence
 
+from .errors import CerbereError
 
-class ContentError(ValueError):
+
+class ContentError(CerbereError, ValueError):
     """La valeur ne peut pas être représentée de façon canonique (non JSON, NaN, clé non-str...)."""
+    code = "content_invalid_value"
 
 
 def _validate(value: Any, path: str = "$") -> None:
