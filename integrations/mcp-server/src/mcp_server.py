@@ -51,7 +51,21 @@ class CohortService:
         """Restore uncommitted branches after a process restart."""
         with self._lock:
             rows = self._db.execute("SELECT * FROM mcp_branches").fetchall()
+            committed = {
+                (event.agent_id, event.payload.get("branch_name"))
+                for event in self.workspace.get_events()
+                if event.action == "workspace.commit"
+            }
             for row in rows:
+                key = (row["agent_id"], row["branch_name"])
+                if key in committed:
+                    # A crash may occur after the commit is durable but before
+                    # its branch row is deleted. Do not resurrect committed work.
+                    self._db.execute(
+                        "DELETE FROM mcp_branches WHERE agent_id = ? AND branch_name = ?",
+                        key,
+                    )
+                    continue
                 base = self.workspace._workspace._snapshots.get(row["base_version"])
                 if base is None:
                     raise RuntimeError(
@@ -67,7 +81,7 @@ class CohortService:
                 )
                 branch.current_data = json.loads(row["current_data_json"])
                 branch.intents = json.loads(row["intents_json"])
-                self._branches[(row["agent_id"], row["branch_name"])] = branch
+                self._branches[key] = branch
 
     def _persist_branch(self, agent_id: str, branch: Branch) -> None:
         self._db.execute(
