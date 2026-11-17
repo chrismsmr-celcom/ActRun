@@ -1,283 +1,282 @@
-"""
-Cerbere Cohort MCP Server
-=================
-Expose Cerbere Cohort coordination tools to LLMs via Model Context Protocol.
+"""Cerbere Cohort MCP server.
 
-Usage:
-    python -m mcp_server
+The default transport is Streamable HTTP so multiple MCP clients can share one
+SQLite-backed workspace. Bind to loopback unless an authenticated proxy is used.
 """
-import asyncio
+from __future__ import annotations
+
+import argparse
 import json
-import sys
 import os
+import threading
+from pathlib import Path
 from typing import Any
 
-# Ajouter le chemin pour importer cerbere_cohort (si pas installé globalement)
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), '../../../python/src'))
+from mcp.server.fastmcp import FastMCP
 
-from mcp.server import Server
-from mcp.server.stdio import stdio_server
-from mcp import types
-
-from cerbere_cohort.workspace import Workspace
-from cerbere_cohort.merge import ConflictError
 from cerbere_cohort.lease import LeaseError
-
-# === État global partagé ===
-# Un seul workspace pour toute la session MCP
-workspace = Workspace()
-
-# Initialiser avec un état par défaut
-workspace.seed({
-    "status": "initialized",
-    "message": "Cerbere Cohort workspace prêt. Utilisez les tools pour collaborer."
-})
+from cerbere_cohort.merge import ConflictError
+from cerbere_cohort.persistence import PersistentWorkspace
+from cerbere_cohort.workspace import Branch
 
 
-# === Création du serveur MCP ===
-server = Server("cerbere_cohort")
+class CohortService:
+    """Thread-safe MCP-facing facade over PersistentWorkspace."""
 
-
-# === DÉFINITION DES TOOLS ===
-
-@server.list_tools()
-async def list_tools() -> list[types.Tool]:
-    """Liste tous les outils disponibles pour le LLM."""
-    return [
-        types.Tool(
-            name="workspace_get_state",
-            description="Lit l'état actuel du workspace partagé (HEAD). Retourne toutes les clés et valeurs.",
-            inputSchema={
-                "type": "object",
-                "properties": {},
-            },
-        ),
-        types.Tool(
-            name="workspace_create_branch",
-            description=(
-                "Crée une nouvelle branche isolée à partir de l'état actuel. "
-                "À utiliser AVANT de modifier l'état pour ne pas perturber les autres agents."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "agent_id": {"type": "string", "description": "Identifiant de l'agent"},
-                    "branch_name": {"type": "string", "description": "Nom de la branche"},
-                },
-                "required": ["agent_id", "branch_name"],
-            },
-        ),
-        types.Tool(
-            name="workspace_set_in_branch",
-            description=(
-                "Modifie une clé dans une branche. "
-                "Nécessite d'avoir un lease actif sur cette clé (voir lease_acquire)."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "agent_id": {"type": "string"},
-                    "branch_name": {"type": "string"},
-                    "key": {"type": "string"},
-                    "value": {"description": "La nouvelle valeur (tout type JSON)"},
-                },
-                "required": ["agent_id", "branch_name", "key", "value"],
-            },
-        ),
-        types.Tool(
-            name="workspace_commit",
-            description=(
-                "Valide les modifications d'une branche dans le workspace principal. "
-                "Détecte automatiquement les conflits avec les commits d'autres agents."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "agent_id": {"type": "string"},
-                    "branch_name": {"type": "string"},
-                },
-                "required": ["agent_id", "branch_name"],
-            },
-        ),
-        types.Tool(
-            name="lease_acquire",
-            description=(
-                "Réserve une ressource (clé) pour une durée donnée. "
-                "Empêche les autres agents de la modifier pendant ce temps. "
-                "À utiliser AVANT de modifier une ressource partagée."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "agent_id": {"type": "string"},
-                    "resource_key": {"type": "string"},
-                    "duration_seconds": {
-                        "type": "number",
-                        "description": "Durée du verrou en secondes (défaut: 30)",
-                        "default": 30.0,
-                    },
-                },
-                "required": ["agent_id", "resource_key"],
-            },
-        ),
-        types.Tool(
-            name="lease_release",
-            description="Libère volontairement un verrou sur une ressource.",
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "agent_id": {"type": "string"},
-                    "resource_key": {"type": "string"},
-                },
-                "required": ["agent_id", "resource_key"],
-            },
-        ),
-        types.Tool(
-            name="get_events",
-            description=(
-                "Retourne le journal immuable de tous les événements. "
-                "Utile pour auditer ce qui s'est passé ou déboguer."
-            ),
-            inputSchema={
-                "type": "object",
-                "properties": {
-                    "limit": {
-                        "type": "integer",
-                        "description": "Nombre max d'événements à retourner (défaut: 50)",
-                        "default": 50,
-                    }
-                },
-            },
-        ),
-    ]
-
-
-# === STOCKAGE DES BRANCHES EN MÉMOIRE ===
-# Les branches doivent être conservées entre les appels d'outils
-_branches: dict[str, Any] = {}
-
-
-def _get_branch(agent_id: str, branch_name: str):
-    """Récupère une branche existante ou lève une erreur."""
-    key = f"{agent_id}:{branch_name}"
-    if key not in _branches:
-        raise ValueError(f"Branche '{branch_name}' introuvable pour l'agent '{agent_id}'. Créez-la d'abord avec workspace_create_branch.")
-    return _branches[key]
-
-
-# === APPEL DES TOOLS ===
-
-@server.call_tool()
-async def call_tool(name: str, arguments: dict) -> list[types.TextContent]:
-    """Dispatche l'appel vers la bonne fonction."""
-    try:
-        if name == "workspace_get_state":
-            return _handle_get_state()
-        elif name == "workspace_create_branch":
-            return _handle_create_branch(**arguments)
-        elif name == "workspace_set_in_branch":
-            return _handle_set_in_branch(**arguments)
-        elif name == "workspace_commit":
-            return _handle_commit(**arguments)
-        elif name == "lease_acquire":
-            return _handle_lease_acquire(**arguments)
-        elif name == "lease_release":
-            return _handle_lease_release(**arguments)
-        elif name == "get_events":
-            return _handle_get_events(**arguments)
-        else:
-            return [types.TextContent(type="text", text=f"❌ Outil inconnu : {name}")]
-    except (ConflictError, LeaseError, ValueError) as e:
-        return [types.TextContent(type="text", text=f"⚠️ Erreur : {e}")]
-    except Exception as e:
-        return [types.TextContent(type="text", text=f"❌ Erreur interne : {type(e).__name__}: {e}")]
-
-
-# === HANDLERS ===
-
-def _handle_get_state() -> list[types.TextContent]:
-    state = workspace.head.data
-    text = f"📍 État actuel du workspace (HEAD: {workspace.head.version_id[:8]})\n\n"
-    if not state:
-        text += "(vide)"
-    else:
-        for k, v in state.items():
-            text += f"  • {k}: {json.dumps(v, ensure_ascii=False)}\n"
-    return [types.TextContent(type="text", text=text)]
-
-
-def _handle_create_branch(agent_id: str, branch_name: str) -> list[types.TextContent]:
-    branch = workspace.create_branch(agent_id, branch_name)
-    _branches[f"{agent_id}:{branch_name}"] = branch
-    return [types.TextContent(
-        type="text",
-        text=f"✅ Branche '{branch_name}' créée par {agent_id} à partir de la version {branch.base_version[:8]}"
-    )]
-
-
-def _handle_set_in_branch(agent_id: str, branch_name: str, key: str, value: Any) -> list[types.TextContent]:
-    branch = _get_branch(agent_id, branch_name)
-    branch.set(key, value)
-    return [types.TextContent(
-        type="text",
-        text=f"✅ Clé '{key}' mise à jour dans la branche '{branch_name}' de {agent_id}"
-    )]
-
-
-def _handle_commit(agent_id: str, branch_name: str) -> list[types.TextContent]:
-    branch = _get_branch(agent_id, branch_name)
-    snapshot = workspace.commit(agent_id, branch)
-    # Supprimer la branche après commit (elle est "consommée")
-    del _branches[f"{agent_id}:{branch_name}"]
-    return [types.TextContent(
-        type="text",
-        text=f"✅ Commit réussi ! Nouvelle version HEAD : {snapshot.version_id[:8]}"
-    )]
-
-
-def _handle_lease_acquire(agent_id: str, resource_key: str, duration_seconds: float = 30.0) -> list[types.TextContent]:
-    lease = workspace.acquire_lease(agent_id, resource_key, duration_seconds)
-    return [types.TextContent(
-        type="text",
-        text=f"🔒 Lease acquis sur '{resource_key}' par {agent_id} pour {duration_seconds}s"
-    )]
-
-
-def _handle_lease_release(agent_id: str, resource_key: str) -> list[types.TextContent]:
-    workspace.release_lease(agent_id, resource_key)
-    return [types.TextContent(
-        type="text",
-        text=f"🔓 Lease libéré sur '{resource_key}' par {agent_id}"
-    )]
-
-
-def _handle_get_events(limit: int = 50) -> list[types.TextContent]:
-    events = workspace.get_events()
-    if not events:
-        return [types.TextContent(type="text", text="📜 Aucun événement enregistré.")]
-    
-    recent = events[-limit:]
-    lines = [f"📜 {len(events)} événements au total (derniers {len(recent)}) :\n"]
-    for e in recent:
-        lines.append(f"  • [{e.action}] {e.agent_id} → {json.dumps(e.payload, ensure_ascii=False)}")
-    
-    return [types.TextContent(type="text", text="\n".join(lines))]
-
-
-# === POINT D'ENTRÉE ===
-
-async def _run():
-    async with stdio_server() as (read_stream, write_stream):
-        await server.run(
-            read_stream,
-            write_stream,
-            server.create_initialization_options()
+    def __init__(self, db_path: str | Path):
+        self.db_path = Path(db_path).expanduser()
+        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self.workspace = PersistentWorkspace(self.db_path)
+        self._db = __import__("sqlite3").connect(
+            str(self.db_path), check_same_thread=False
         )
+        self._db.row_factory = __import__("sqlite3").Row
+        self._lock = threading.RLock()
+        self._db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS mcp_branches (
+                agent_id TEXT NOT NULL,
+                branch_name TEXT NOT NULL,
+                base_version TEXT NOT NULL,
+                current_data_json TEXT NOT NULL,
+                intents_json TEXT NOT NULL,
+                PRIMARY KEY (agent_id, branch_name)
+            )
+            """
+        )
+        self._db.commit()
+        self._branches: dict[tuple[str, str], Branch] = {}
+        self._restore_branches()
+
+    def _restore_branches(self) -> None:
+        """Restore uncommitted branches after a process restart."""
+        with self._lock:
+            rows = self._db.execute("SELECT * FROM mcp_branches").fetchall()
+            for row in rows:
+                base = self.workspace._workspace._snapshots.get(row["base_version"])
+                if base is None:
+                    raise RuntimeError(
+                        f"Cannot restore branch {row['agent_id']}:{row['branch_name']}: "
+                        "its base snapshot is missing"
+                    )
+                branch = Branch(
+                    name=row["branch_name"],
+                    base_snapshot=base,
+                    lease_manager=self.workspace._workspace._lease_manager,
+                    agent_id=row["agent_id"],
+                    require_leases=self.workspace._workspace._require_leases,
+                )
+                branch.current_data = json.loads(row["current_data_json"])
+                branch.intents = json.loads(row["intents_json"])
+                self._branches[(row["agent_id"], row["branch_name"])] = branch
+
+    def _persist_branch(self, agent_id: str, branch: Branch) -> None:
+        self._db.execute(
+            """
+            INSERT INTO mcp_branches
+                (agent_id, branch_name, base_version, current_data_json, intents_json)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(agent_id, branch_name) DO UPDATE SET
+                base_version=excluded.base_version,
+                current_data_json=excluded.current_data_json,
+                intents_json=excluded.intents_json
+            """,
+            (
+                agent_id,
+                branch.name,
+                branch.base_version,
+                json.dumps(branch.current_data, ensure_ascii=False, sort_keys=True),
+                json.dumps(branch.intents, ensure_ascii=False, sort_keys=True),
+            ),
+        )
+        self._db.commit()
+
+    def _branch(self, agent_id: str, branch_name: str) -> Branch:
+        try:
+            return self._branches[(agent_id, branch_name)]
+        except KeyError as exc:
+            raise ValueError(
+                f"Branch '{branch_name}' not found for agent '{agent_id}'. "
+                "Create it first with workspace_create_branch."
+            ) from exc
+
+    def get_state(self) -> dict[str, Any]:
+        with self._lock:
+            return {
+                "head_version": self.workspace.head.version_id,
+                "state": self.workspace.head.data,
+            }
+
+    def create_branch(self, agent_id: str, branch_name: str) -> dict[str, str]:
+        self._validate_identity(agent_id, branch_name)
+        with self._lock:
+            key = (agent_id, branch_name)
+            if key in self._branches:
+                raise ValueError(f"Branch '{branch_name}' already exists for '{agent_id}'.")
+            branch = self.workspace.create_branch(agent_id, branch_name)
+            self._branches[key] = branch
+            self._persist_branch(agent_id, branch)
+            return {
+                "agent_id": agent_id,
+                "branch_name": branch_name,
+                "base_version": branch.base_version,
+            }
+
+    def read_branch(self, agent_id: str, branch_name: str, key: str) -> dict[str, Any]:
+        with self._lock:
+            branch = self._branch(agent_id, branch_name)
+            return {"key": key, "exists": key in branch.current_data, "value": branch.get(key)}
+
+    def write_branch(
+        self, agent_id: str, branch_name: str, key: str, value: Any, intent: str | None = None
+    ) -> dict[str, Any]:
+        with self._lock:
+            branch = self._branch(agent_id, branch_name)
+            branch.set(key, value, intent=intent)
+            self._persist_branch(agent_id, branch)
+            return {"updated": True, "key": key, "branch_name": branch_name}
+
+    def delete_branch_key(
+        self, agent_id: str, branch_name: str, key: str, intent: str | None = None
+    ) -> dict[str, Any]:
+        with self._lock:
+            branch = self._branch(agent_id, branch_name)
+            branch.delete(key, intent=intent)
+            self._persist_branch(agent_id, branch)
+            return {"deleted": True, "key": key, "branch_name": branch_name}
+
+    def commit_branch(self, agent_id: str, branch_name: str) -> dict[str, Any]:
+        with self._lock:
+            branch = self._branch(agent_id, branch_name)
+            snapshot = self.workspace.commit(agent_id, branch)
+            self._db.execute(
+                "DELETE FROM mcp_branches WHERE agent_id = ? AND branch_name = ?",
+                (agent_id, branch_name),
+            )
+            self._db.commit()
+            del self._branches[(agent_id, branch_name)]
+            return {"committed": True, "head_version": snapshot.version_id, "state": snapshot.data}
+
+    def acquire_lease(
+        self, agent_id: str, resource_key: str, duration_seconds: float = 30.0
+    ) -> dict[str, Any]:
+        with self._lock:
+            lease = self.workspace.acquire_lease(agent_id, resource_key, duration_seconds)
+            return {
+                "acquired": True,
+                "resource_key": resource_key,
+                "agent_id": agent_id,
+                "expires_at": lease.expires_at,
+            }
+
+    def release_lease(self, agent_id: str, resource_key: str) -> dict[str, bool]:
+        with self._lock:
+            self.workspace.release_lease(agent_id, resource_key)
+            return {"released": True}
+
+    def get_events(self, limit: int = 50) -> list[dict[str, Any]]:
+        if limit < 1 or limit > 1000:
+            raise ValueError("limit must be between 1 and 1000")
+        with self._lock:
+            events = self.workspace.get_events()[-limit:]
+            return [event.model_dump(mode="json") for event in events]
+
+    @staticmethod
+    def _validate_identity(agent_id: str, branch_name: str) -> None:
+        if not agent_id.strip() or not branch_name.strip():
+            raise ValueError("agent_id and branch_name must not be empty")
+        if len(agent_id) > 128 or len(branch_name) > 128:
+            raise ValueError("agent_id and branch_name must be 128 characters or fewer")
+
+    def close(self) -> None:
+        with self._lock:
+            self.workspace.close()
+            self._db.close()
 
 
-def main():
-    """Point d'entrée CLI."""
-    asyncio.run(_run())
+def create_server(service: CohortService) -> FastMCP:
+    mcp = FastMCP("cerbere-cohort")
+
+    @mcp.tool()
+    def workspace_get_state() -> dict[str, Any]:
+        """Return the current committed workspace state and HEAD version."""
+        return service.get_state()
+
+    @mcp.tool()
+    def workspace_create_branch(agent_id: str, branch_name: str) -> dict[str, str]:
+        """Create an isolated branch from the current HEAD before editing shared state."""
+        return service.create_branch(agent_id, branch_name)
+
+    @mcp.tool()
+    def workspace_read_in_branch(agent_id: str, branch_name: str, key: str) -> dict[str, Any]:
+        """Read one key from an agent's isolated branch."""
+        return service.read_branch(agent_id, branch_name, key)
+
+    @mcp.tool()
+    def workspace_set_in_branch(
+        agent_id: str, branch_name: str, key: str, value: Any, intent: str | None = None
+    ) -> dict[str, Any]:
+        """Write a JSON value to a branch. The write is persisted immediately."""
+        return service.write_branch(agent_id, branch_name, key, value, intent)
+
+    @mcp.tool()
+    def workspace_delete_in_branch(
+        agent_id: str, branch_name: str, key: str, intent: str | None = None
+    ) -> dict[str, Any]:
+        """Delete a key from a branch. The deletion is persisted immediately."""
+        return service.delete_branch_key(agent_id, branch_name, key, intent)
+
+    @mcp.tool()
+    def workspace_commit(agent_id: str, branch_name: str) -> dict[str, Any]:
+        """Commit a branch. Conflicting concurrent edits are rejected, never silently overwritten."""
+        return service.commit_branch(agent_id, branch_name)
+
+    @mcp.tool()
+    def lease_acquire(
+        agent_id: str, resource_key: str, duration_seconds: float = 30.0
+    ) -> dict[str, Any]:
+        """Acquire a time-limited lease on a shared resource."""
+        return service.acquire_lease(agent_id, resource_key, duration_seconds)
+
+    @mcp.tool()
+    def lease_release(agent_id: str, resource_key: str) -> dict[str, bool]:
+        """Release a lease owned by the calling agent."""
+        return service.release_lease(agent_id, resource_key)
+
+    @mcp.tool()
+    def get_events(limit: int = 50) -> list[dict[str, Any]]:
+        """Read the latest append-only coordination events."""
+        return service.get_events(limit)
+
+    return mcp
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Cerbere Cohort MCP server")
+    parser.add_argument(
+        "--transport",
+        choices=("streamable-http", "stdio"),
+        default=os.getenv("COHORT_MCP_TRANSPORT", "streamable-http"),
+    )
+    parser.add_argument(
+        "--db",
+        default=os.getenv(
+            "COHORT_DB_PATH", str(Path.home() / ".cerbere-cohort" / "workspace.db")
+        ),
+        help="SQLite database path (default: ~/.cerbere-cohort/workspace.db)",
+    )
+    parser.add_argument("--host", default=os.getenv("COHORT_MCP_HOST", "127.0.0.1"))
+    parser.add_argument("--port", type=int, default=int(os.getenv("COHORT_MCP_PORT", "8765")))
+    args = parser.parse_args()
+
+    service = CohortService(args.db)
+    mcp = create_server(service)
+    if args.transport == "stdio":
+        mcp.run(transport="stdio")
+    else:
+        mcp.settings.host = args.host
+        mcp.settings.port = args.port
+        mcp.run(transport="streamable-http")
 
 
 if __name__ == "__main__":
