@@ -4,7 +4,8 @@ import {
   Boxes, Check, ChevronDown, CircleHelp, Clock3, Command, GitBranch,
   LayoutDashboard, LockKeyhole, Menu, Moon, MoreHorizontal, Network,
   Plus, Search, Settings2, ShieldCheck, Sun, TerminalSquare, Workflow, X,
-  Zap, Filter, RefreshCw, Cpu, Timer, ChevronRight, CircleDot
+  Zap, Filter, RefreshCw, Cpu, Timer, ChevronRight, CircleDot,
+  Database, History, Hash, FileJson, GitCommit, Pencil, Save, Eye
 } from "lucide-react";
 
 type Page = "Overview" | "Agents" | "Tasks" | "Shared state" | "Leases" | "Conflicts" | "Event log" | "MCP server" | "Settings";
@@ -67,6 +68,7 @@ function App() {
     if (page === "Overview") return <Overview onNavigate={setPage} onCreate={() => setShowCreate(true)} />;
     if (page === "Agents") return <AgentsPage onNotify={notify} />;
     if (page === "Tasks") return <TasksPage onNotify={notify} />;
+    if (page === "Shared state") return <SharedStatePage onNotify={notify} />;
     return <PlaceholderPage page={page} onAction={() => notify(`${page} controls will be connected in a later step.`)} />;
   }, [page]);
 
@@ -354,6 +356,102 @@ function TasksPage({ onNotify }: { onNotify: (message: string) => void }) {
 
 function PriorityBadge({priority}:{priority:TaskPriority}) {
   return <span className={`priority-badge ${priority.toLowerCase()}`}><i/>{priority}</span>;
+}
+
+
+type SharedEntry = { key: string; value: unknown; version: number; hash: string; updatedBy: string; updatedAt: string; intent: string };
+type StateRevision = { version: number; agent: string; time: string; intent: string; hash: string; value: unknown };
+const initialSharedEntries: SharedEntry[] = [
+  { key:"app/config", value:{ environment:"staging", region:"eu-west", featureFlags:{newDashboard:true,betaAuth:false} }, version:8, hash:"sha256:7a9f3c21d8b4…", updatedBy:"agent-backend", updatedAt:"2 min ago", intent:"Align staging runtime configuration with the deployment plan." },
+  { key:"spec/auth", value:{ provider:"oauth2", tokenLifetime:3600, refreshRotation:true, scopes:["profile","email","workspace:read"] }, version:6, hash:"sha256:3b82e6a9c104…", updatedBy:"agent-security", updatedAt:"8 min ago", intent:"Document the agreed authentication and authorization contract." },
+  { key:"db/schema", value:{ version:3, tables:["users","workspaces","agent_runs"], migrationsPending:1 }, version:5, hash:"sha256:c16d4a80b72f…", updatedBy:"agent-backend", updatedAt:"14 min ago", intent:"Add the agent_runs table to the staging schema." },
+  { key:"frontend/theme", value:{ mode:"system", accent:"violet", density:"comfortable" }, version:3, hash:"sha256:91f0d5c44a8e…", updatedBy:"agent-frontend", updatedAt:"21 min ago", intent:"Keep visual preferences consistent across the app shell." },
+  { key:"workflow/release", value:{ target:"v0.4.0", status:"in-review", checklist:["tests","security-review","release-notes"] }, version:2, hash:"sha256:2d7e8f11ac03…", updatedBy:"agent-tests", updatedAt:"36 min ago", intent:"Prepare the release checklist for final review." },
+  { key:"workspace/description", value:"Shared staging workspace for the Cohort UI implementation.", version:1, hash:"sha256:0a44c2f87e91…", updatedBy:"system", updatedAt:"1 hour ago", intent:"Initial workspace metadata." },
+];
+const sampleRevisions: Record<string, StateRevision[]> = {
+  "app/config":[
+    {version:8,agent:"agent-backend",time:"2 min ago",intent:"Align staging runtime configuration with the deployment plan.",hash:"7a9f3c21d8b4",value:{environment:"staging",region:"eu-west",featureFlags:{newDashboard:true,betaAuth:false}}},
+    {version:7,agent:"agent-backend",time:"19 min ago",intent:"Enable the new dashboard in staging.",hash:"0b21a4f981c2",value:{environment:"staging",region:"eu-west",featureFlags:{newDashboard:true,betaAuth:false}}},
+    {version:6,agent:"agent-frontend",time:"42 min ago",intent:"Add initial feature flag configuration.",hash:"ad41f109a2d0",value:{environment:"staging",region:"eu-west",featureFlags:{newDashboard:false,betaAuth:false}}},
+  ],
+  "spec/auth":[
+    {version:6,agent:"agent-security",time:"8 min ago",intent:"Document the agreed authentication and authorization contract.",hash:"3b82e6a9c104",value:{provider:"oauth2",tokenLifetime:3600,refreshRotation:true,scopes:["profile","email","workspace:read"]}},
+    {version:5,agent:"agent-backend",time:"31 min ago",intent:"Add refresh token rotation to the auth contract.",hash:"d4128a6f8b20",value:{provider:"oauth2",tokenLifetime:3600,refreshRotation:true,scopes:["profile","email"]}},
+  ],
+};
+const sampleBranches = [
+  {name:"agent-backend/auth-api",agent:"agent-backend",base:"snap_83c1…",changes:2,status:"Ahead of HEAD",tone:"violet"},
+  {name:"agent-frontend/app-shell",agent:"agent-frontend",base:"snap_83c1…",changes:1,status:"Ready to commit",tone:"blue"},
+  {name:"agent-tests/integration",agent:"agent-tests",base:"snap_91a7…",changes:0,status:"In sync",tone:"green"},
+];
+
+function SharedStatePage({onNotify}:{onNotify:(message:string)=>void}) {
+  const [entries,setEntries]=useState<SharedEntry[]>(initialSharedEntries);
+  const [query,setQuery]=useState("");
+  const [namespace,setNamespace]=useState("All namespaces");
+  const [selected,setSelected]=useState<SharedEntry|null>(null);
+  const [showBranches,setShowBranches]=useState(false);
+  const [editing,setEditing]=useState(false);
+  const [editValue,setEditValue]=useState("");
+  const [creating,setCreating]=useState(false);
+  const [newKey,setNewKey]=useState("");
+  const [newValue,setNewValue]=useState('{"status":"new"}');
+  const namespaces=["All namespaces",...Array.from(new Set(entries.map(entry=>entry.key.split("/")[0])))];
+  const filtered=entries.filter(entry=>(namespace==="All namespaces"||entry.key.startsWith(namespace+"/"))&&`${entry.key} ${entry.updatedBy}`.toLowerCase().includes(query.toLowerCase()));
+  const current=entries.find(entry=>entry.key===selected?.key)??selected;
+  const openEntry=(entry:SharedEntry)=>{setSelected(entry);setEditing(false);setEditValue(JSON.stringify(entry.value,null,2));};
+  const saveEdit=()=>{
+    if(!selected)return;
+    try{const parsed=JSON.parse(editValue);setEntries(items=>items.map(item=>item.key===selected.key?{...item,value:parsed,version:item.version+1,hash:"sha256:preview-"+Math.random().toString(16).slice(2,10),updatedBy:"you",updatedAt:"Just now",intent:"Edited in the local interface preview."}:item));setSelected(item=>item?{...item,value:parsed,version:item.version+1,updatedBy:"you",updatedAt:"Just now",intent:"Edited in the local interface preview."}:item);setEditing(false);onNotify("Value updated in local preview only. No workspace commit was created.");}catch{onNotify("Invalid JSON. Correct the value before saving.");}
+  };
+  const createEntry=()=>{
+    if(!newKey.includes("/")||entries.some(item=>item.key===newKey.trim())){onNotify("Use a unique key with a namespace, for example app/config.");return;}
+    try{const value=JSON.parse(newValue);const entry:SharedEntry={key:newKey.trim(),value,version:1,hash:"sha256:preview-"+Math.random().toString(16).slice(2,10),updatedBy:"you",updatedAt:"Just now",intent:"Created in the local interface preview."};setEntries(items=>[entry,...items]);setCreating(false);setNewKey("");onNotify("Key added to local preview only. It is not committed to the workspace.");}catch{onNotify("Value must be valid JSON.");}
+  };
+  return <>
+    <section className="state-hero">
+      <div className="state-hero-main"><div className="state-hero-icon"><Database size={20}/></div><div><div className="state-eyebrow">WORKSPACE SNAPSHOT <span className="snapshot-live-dot"/> CURRENT HEAD</div><h2>Shared state</h2><p>A versioned, content-addressed view of the data agents are coordinating around.</p></div></div>
+      <div className="snapshot-id"><span>HEAD VERSION</span><strong>snap_9f2a7c81d4e6</strong><small><GitCommit size={12}/> 3 parent snapshots</small></div>
+    </section>
+    <section className="state-stats">
+      <div><span>Keys in HEAD</span><strong>{String(entries.length).padStart(2,"0")}</strong><small>Current snapshot entries</small></div>
+      <div><span>Active branches</span><strong>03</strong><small>Isolated agent workspaces</small></div>
+      <div><span>Recent revisions</span><strong>12</strong><small>Across the sample history</small></div>
+      <div><span>Content integrity</span><strong className="metric-green">Verified</strong><small>Hash-addressed values</small></div>
+    </section>
+    <section className="panel state-entries-panel">
+      <div className="state-panel-heading"><div><h2>Snapshot entries <span className="count-chip">{filtered.length}</span></h2><p>Each key points to a value in the current immutable snapshot.</p></div><button className="primary-button" onClick={()=>setCreating(true)}><Plus size={14}/> Add key</button></div>
+      <div className="state-controls"><label className="registry-search"><Search size={15}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search keys or agents..."/></label><div className="filter-control"><Filter size={14}/><select value={namespace} onChange={e=>setNamespace(e.target.value)}>{namespaces.map(item=><option key={item}>{item}</option>)}</select><ChevronDown size={13}/></div><button className="icon-button refresh-button" onClick={()=>onNotify("Snapshot refreshed from sample data. Runtime connection is not active.")} aria-label="Refresh snapshot"><RefreshCw size={15}/></button></div>
+      <div className="state-table-wrap"><div className="state-table-head"><span>KEY</span><span>VERSION</span><span>LAST WRITER</span><span>UPDATED</span><span>CONTENT HASH</span><span/></div>
+        {filtered.map(entry=><button className="state-row" key={entry.key} onClick={()=>openEntry(entry)}>
+          <div className="state-key-cell"><span className="state-key-icon"><FileJson size={15}/></span><div><strong>{entry.key}</strong><small>{entry.key.split("/")[0]} namespace</small></div></div>
+          <span className="state-version">v{entry.version}</span><span className="state-writer">{entry.updatedBy}</span><span className="state-updated"><Clock3 size={12}/>{entry.updatedAt}</span><span className="state-hash">{entry.hash}</span><ChevronRight size={15} className="registry-chevron"/>
+        </button>)}
+        {filtered.length===0&&<div className="registry-empty"><Search size={20}/><strong>No keys found</strong><span>Try another key or namespace.</span></div>}
+      </div>
+      <div className="state-table-footer"><span>Showing {filtered.length} of {entries.length} keys</span><span>Sample data · not connected to runtime</span></div>
+    </section>
+    <section className="state-lower-grid">
+      <div className="panel branch-panel"><div className="state-panel-heading"><div><h2>Agent branches</h2><p>Isolated working copies based on a snapshot.</p></div><button className="text-button" onClick={()=>setShowBranches(value=>!value)}>{showBranches?"Hide":"View all"} <ArrowRight size={13}/></button></div>
+        {sampleBranches.slice(0,showBranches?3:2).map(item=><div className="branch-state-row" key={item.name}><span className={`branch-state-icon ${item.tone}`}><GitBranch size={15}/></span><div className="branch-state-info"><strong>{item.name}</strong><small>{item.agent} · base {item.base}</small></div><div className="branch-state-meta"><strong>{item.changes} changes</strong><span className={`branch-status ${item.tone}`}>{item.status}</span></div></div>)}
+        <div className="branch-panel-foot"><GitBranch size={13}/> Branches stay isolated until a successful commit.</div>
+      </div>
+      <div className="panel integrity-panel"><div className="integrity-heading"><div className="integrity-icon"><Hash size={17}/></div><div><h2>Content-addressed storage</h2><p>Values are canonicalized and hashed.</p></div></div><div className="integrity-flow"><div><span>JSON value</span><strong>Canonicalize</strong></div><ArrowRight size={14}/><div><span>SHA-256</span><strong>Content hash</strong></div></div><p className="integrity-note">Snapshot IDs include the entry hashes and parent snapshot history. Identical content produces the same content hash.</p><button className="text-button" onClick={()=>onNotify("Hash verification details will be available when the runtime is connected.")}>Explore integrity details <ArrowRight size={13}/></button></div>
+    </section>
+    {current&&<div className="modal-backdrop" onClick={()=>setSelected(null)}><div className="state-detail-modal" onClick={e=>e.stopPropagation()}>
+      <div className="modal-head"><div><span className="eyebrow">SNAPSHOT ENTRY · {current.key.split("/")[0].toUpperCase()}</span><h2>{current.key}</h2></div><button className="icon-button" onClick={()=>setSelected(null)}><X size={18}/></button></div>
+      <div className="state-detail-meta"><span>Version <strong>v{current.version}</strong></span><span>Last writer <strong>{current.updatedBy}</strong></span><span>Updated <strong>{current.updatedAt}</strong></span></div>
+      <div className="state-value-heading"><strong>Current value</strong><span><Hash size={11}/>{current.hash}</span></div>
+      {editing?<textarea className="state-json-editor" value={editValue} onChange={e=>setEditValue(e.target.value)} spellCheck={false}/>:<pre className="state-json-view">{JSON.stringify(current.value,null,2)}</pre>}
+      <div className="state-intent"><span>WRITE INTENT</span><p>{current.intent||"No intent recorded for this key."}</p></div>
+      <div className="state-history"><div className="state-history-head"><strong><History size={14}/> Revision history</strong><span>{(sampleRevisions[current.key]??[{version:current.version,agent:current.updatedBy,time:current.updatedAt,intent:current.intent,hash:current.hash,value:current.value}]).length} revisions shown</span></div>
+        {(sampleRevisions[current.key]??[{version:current.version,agent:current.updatedBy,time:current.updatedAt,intent:current.intent,hash:current.hash,value:current.value}]).map(rev=><div className="revision-row" key={rev.version}><span className="revision-marker"/><div><strong>v{rev.version} · {rev.agent}</strong><small>{rev.intent}</small></div><span>{rev.time}</span></div>)}
+      </div>
+      <div className="modal-actions"><button className="secondary-button" onClick={()=>{setEditing(v=>!v);setEditValue(JSON.stringify(current.value,null,2));}}>{editing?"Cancel edit":<><Pencil size={13}/> Edit value</>}</button>{editing&&<button className="primary-button" onClick={saveEdit}><Save size={13}/> Save preview</button>}</div>
+    </div></div>}
+    {creating&&<div className="modal-backdrop" onClick={()=>setCreating(false)}><div className="task-modal state-create-modal" onClick={e=>e.stopPropagation()}><div className="modal-head"><div><span className="eyebrow">WORKSPACE SNAPSHOT</span><h2>Add a state key</h2></div><button className="icon-button" onClick={()=>setCreating(false)}><X size={18}/></button></div><p className="modal-copy">Create a namespaced key in this local preview. A real write requires an agent branch and a successful workspace commit.</p><label className="field-label">Key<input value={newKey} onChange={e=>setNewKey(e.target.value)} placeholder="e.g. app/config"/></label><label className="field-label">JSON value<textarea className="state-json-editor create-json" value={newValue} onChange={e=>setNewValue(e.target.value)} spellCheck={false}/></label><div className="modal-actions"><button className="secondary-button" onClick={()=>setCreating(false)}>Cancel</button><button className="primary-button" onClick={createEntry}>Add key <ArrowRight size={14}/></button></div></div></div>}
+  </>;
 }
 
 function PlaceholderPage({ page, onAction }: { page: Page; onAction: () => void }) {
