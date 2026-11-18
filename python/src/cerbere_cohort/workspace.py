@@ -181,7 +181,7 @@ class Workspace:
             with self._lock:
                 head = self.head
                 base = self._snapshots[branch.base_version]
-                if self._require_leases:
+                if self._require_leases and not getattr(branch, "_lease_exempt", False):
                     changed_keys = {key for key in set(base.data) | set(branch.current_data)
                                     if base.data.get(key) != branch.current_data.get(key)}
                     active = self._lease_manager.get_active_leases()
@@ -364,6 +364,8 @@ class Workspace:
     def seed(self, data: Dict[str, Any], agent_id: str = "system") -> Snapshot:
         """Initialise l'état par un vrai commit (journalisé, rejouable). Ignore les leases."""
         branch = self.create_branch(agent_id, "seed")
+        # Seed is a trusted system initialization path, not an agent write.
+        branch._lease_exempt = True
         for key, value in data.items():
             branch._put(key, value)
         return self.commit(agent_id, branch)
