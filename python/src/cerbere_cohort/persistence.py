@@ -7,6 +7,7 @@ Permet la reprise après arrêt et le replay déterministe.
 import json
 import sqlite3
 import threading
+import time
 
 from .merge import ConflictError
 from pathlib import Path
@@ -14,7 +15,7 @@ from typing import Optional, List, Dict, Any
 
 from .events import CerbereCohortEvent
 from .workspace import Workspace, Snapshot, Branch, ContentStore
-from .lease import LeaseManager, Lease
+from .lease import LeaseManager, Lease, LeaseError
 
 
 class PersistentWorkspace:
@@ -156,12 +157,53 @@ class PersistentWorkspace:
         return self._workspace.store
     
     def acquire_lease(self, agent_id: str, resource_key: str, duration_seconds: float = 30.0, **kwargs) -> Lease:
-        """Acquiert un lease et le persiste."""
-        def operation():
-            lease = self._workspace.acquire_lease(agent_id, resource_key, duration_seconds, **kwargs)
-            self._save_lease(lease)
-            return lease
-        return self._mutate(operation)
+        """Acquiert un lease sans conserver de transaction pendant une attente.
+
+        En mode persistant, chaque tentative non bloquante utilise sa propre
+        transaction SQLite. L'attente et le polling se déroulent hors transaction
+        afin qu'un autre processus puisse libérer le lease.
+        """
+        wait = kwargs.pop("wait", False)
+        timeout_seconds = kwargs.pop("timeout_seconds", 5.0)
+
+        if not wait or not self.auto_save:
+            def operation():
+                lease = self._workspace.acquire_lease(
+                    agent_id, resource_key, duration_seconds, wait=wait,
+                    timeout_seconds=timeout_seconds, **kwargs
+                )
+                self._save_lease(lease)
+                return lease
+            return self._mutate(operation)
+
+        deadline = time.monotonic() + timeout_seconds
+        while True:
+            try:
+                def try_acquire():
+                    lease = self._workspace.acquire_lease(
+                        agent_id, resource_key, duration_seconds, wait=False, **kwargs
+                    )
+                    self._save_lease(lease)
+                    return lease
+
+                return self._mutate(try_acquire)
+            except LeaseError as exc:
+                if exc.code != "lease_held":
+                    raise
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    holder = (exc.details or {}).get("holder", "unknown")
+                    raise LeaseError(
+                        f"Timeout après {timeout_seconds}s en attendant "
+                        f"'{resource_key}' (détenu par '{holder}')",
+                        code="lease_wait_timeout",
+                        details={
+                            "resource_key": resource_key,
+                            "holder": holder,
+                            "timeout_seconds": timeout_seconds,
+                        },
+                    ) from exc
+                time.sleep(min(0.02, remaining))
     
     def release_lease(self, agent_id: str, resource_key: str) -> None:
         """Libère un lease et le persiste."""
