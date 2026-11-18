@@ -86,6 +86,7 @@ class Branch:
         self._agent_id = agent_id
         self._require_leases = require_leases
         self.intents: Dict[str, str] = {}  # clé -> pourquoi (provenance, jamais utilisé pour décider)
+        self.fencing_tokens: Dict[str, int] = {}
 
     def _check_write_allowed(self, key: str, verb: str) -> None:
         if self._require_leases and not self._lease_manager.check_lease(self._agent_id, key):
@@ -99,6 +100,11 @@ class Branch:
                     "operation": verb,
                 },
             )
+        if self._require_leases:
+            lease = self._lease_manager.get_active_leases().get(key)
+            if lease is None or lease.agent_id != self._agent_id:
+                raise LeaseError("Lease absent ou expiré.", code="lease_required")
+            self.fencing_tokens[key] = lease.fencing_token
 
     def _put(self, key: str, value: Any) -> None:
         if not isinstance(key, str):
@@ -175,6 +181,22 @@ class Workspace:
             with self._lock:
                 head = self.head
                 base = self._snapshots[branch.base_version]
+                if self._require_leases and not getattr(branch, "_lease_exempt", False):
+                    changed_keys = {key for key in set(base.data) | set(branch.current_data)
+                                    if base.data.get(key) != branch.current_data.get(key)}
+                    active = self._lease_manager.get_active_leases()
+                    for key in changed_keys:
+                        lease = active.get(key)
+                        expected = branch.fencing_tokens.get(key)
+                        if (lease is None or lease.agent_id != agent_id or expected is None
+                                or lease.fencing_token != expected):
+                            raise LeaseError(
+                                f"Lease obsolète pour '{key}' : le commit de '{agent_id}' est refusé.",
+                                code="lease_fenced",
+                                details={"resource_key": key, "agent_id": agent_id,
+                                         "expected_fencing_token": expected,
+                                         "current_fencing_token": lease.fencing_token if lease else None},
+                            )
                 branch_entries = {key: content_hash(value) for key, value in branch.current_data.items()}
                 result = detect_and_merge(base.entries, branch_entries, head.entries)
                 if result.success:
@@ -342,6 +364,8 @@ class Workspace:
     def seed(self, data: Dict[str, Any], agent_id: str = "system") -> Snapshot:
         """Initialise l'état par un vrai commit (journalisé, rejouable). Ignore les leases."""
         branch = self.create_branch(agent_id, "seed")
+        # Seed is a trusted system initialization path, not an agent write.
+        branch._lease_exempt = True
         for key, value in data.items():
             branch._put(key, value)
         return self.commit(agent_id, branch)
