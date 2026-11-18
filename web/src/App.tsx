@@ -77,7 +77,7 @@ function App() {
     if (page === "MCP server") return <McpPage onNotify={notify} />;
     if (page === "Settings") return <SettingsPage onNotify={notify} />;
     if (page === "Shared state") return <SharedStatePage onNotify={notify} />;
-    return <PlaceholderPage page={page} onAction={() => notify(`${page} controls will be connected in a later step.`)} />;
+    return null;
   }, [page]);
 
   return (
