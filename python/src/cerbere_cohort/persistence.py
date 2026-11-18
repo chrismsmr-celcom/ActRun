@@ -28,7 +28,7 @@ class PersistentWorkspace:
     - Les leases actifs (verrous)
     """
     
-    def __init__(self, db_path: str | Path, auto_save: bool = True):
+    def __init__(self, db_path: str | Path, auto_save: bool = True, require_leases: bool = False):
         """
         Args:
             db_path: Chemin vers le fichier SQLite
@@ -36,10 +36,11 @@ class PersistentWorkspace:
         """
         self.db_path = Path(db_path)
         self.auto_save = auto_save
+        self.require_leases = require_leases
         self._lock = threading.RLock()
         
         # Workspace en mémoire : reconstruit par replay du journal au chargement
-        self._workspace = Workspace()
+        self._workspace = Workspace(require_leases=self.require_leases)
         self._persisted_ids: set[str] = set()
         self._persisted_hashes: set[str] = set()
         
@@ -86,11 +87,19 @@ class PersistentWorkspace:
                     key TEXT PRIMARY KEY,
                     value TEXT NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS lease_counters (
+                    resource_key TEXT PRIMARY KEY,
+                    fencing_token INTEGER NOT NULL
+                );
                 
                 CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp);
                 CREATE INDEX IF NOT EXISTS idx_events_agent ON events(agent_id);
                 CREATE INDEX IF NOT EXISTS idx_events_action ON events(action);
             """)
+            columns = {row["name"] for row in self._conn.execute("PRAGMA table_info(leases)")}
+            if "fencing_token" not in columns:
+                self._conn.execute("ALTER TABLE leases ADD COLUMN fencing_token INTEGER NOT NULL DEFAULT 0")
             self._conn.commit()
     
     def _load_from_db(self):
@@ -117,18 +126,26 @@ class PersistentWorkspace:
                 ))
                 self._persisted_ids.add(r['event_id'])
 
-            self._workspace = Workspace.replay(events, store)  # lève ReplayError si le journal est incohérent
+            self._workspace = Workspace.replay(
+                events, store, require_leases=self.require_leases
+            )  # lève ReplayError si le journal est incohérent
+
+            for counter in self._conn.execute(
+                "SELECT resource_key, fencing_token FROM lease_counters"
+            ):
+                self._workspace._lease_manager._fencing_counters[counter["resource_key"]] = counter["fencing_token"]
             
             # Charger les leases actifs
             cursor = self._conn.execute(
-                "SELECT resource_key, agent_id, expires_at, acquired_at FROM leases"
+                "SELECT resource_key, agent_id, expires_at, acquired_at, fencing_token FROM leases"
             )
             for r in cursor:
                 lease = Lease(
                     agent_id=r['agent_id'],
                     resource_key=r['resource_key'],
                     expires_at=r['expires_at'],
-                    acquired_at=r['acquired_at']
+                    acquired_at=r['acquired_at'],
+                    fencing_token=r['fencing_token'],
                 )
                 self._workspace._lease_manager._active_leases[r['resource_key']] = lease
     
@@ -264,8 +281,13 @@ class PersistentWorkspace:
         """Sauvegarde un lease dans SQLite."""
         with self._lock:
             self._conn.execute(
-                "INSERT OR REPLACE INTO leases (resource_key, agent_id, expires_at, acquired_at) VALUES (?, ?, ?, ?)",
-                (lease.resource_key, lease.agent_id, lease.expires_at, lease.acquired_at)
+                "INSERT OR REPLACE INTO leases (resource_key, agent_id, expires_at, acquired_at, fencing_token) VALUES (?, ?, ?, ?, ?)",
+                (lease.resource_key, lease.agent_id, lease.expires_at, lease.acquired_at, lease.fencing_token)
+            )
+            self._conn.execute(
+                """INSERT INTO lease_counters (resource_key, fencing_token) VALUES (?, ?)
+                   ON CONFLICT(resource_key) DO UPDATE SET fencing_token = MAX(fencing_token, excluded.fencing_token)""",
+                (lease.resource_key, lease.fencing_token),
             )
     
     def _delete_lease(self, resource_key: str):
