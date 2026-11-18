@@ -87,6 +87,7 @@ class Branch:
         self._require_leases = require_leases
         self.intents: Dict[str, str] = {}  # clé -> pourquoi (provenance, jamais utilisé pour décider)
         self.fencing_tokens: Dict[str, int] = {}
+        self._lease_exempt = False
 
     def _check_write_allowed(self, key: str, verb: str) -> None:
         if self._require_leases and not self._lease_manager.check_lease(self._agent_id, key):
@@ -181,22 +182,7 @@ class Workspace:
             with self._lock:
                 head = self.head
                 base = self._snapshots[branch.base_version]
-                if self._require_leases and not getattr(branch, "_lease_exempt", False):
-                    changed_keys = {key for key in set(base.data) | set(branch.current_data)
-                                    if base.data.get(key) != branch.current_data.get(key)}
-                    active = self._lease_manager.get_active_leases()
-                    for key in changed_keys:
-                        lease = active.get(key)
-                        expected = branch.fencing_tokens.get(key)
-                        if (lease is None or lease.agent_id != agent_id or expected is None
-                                or lease.fencing_token != expected):
-                            raise LeaseError(
-                                f"Lease obsolète pour '{key}' : le commit de '{agent_id}' est refusé.",
-                                code="lease_fenced",
-                                details={"resource_key": key, "agent_id": agent_id,
-                                         "expected_fencing_token": expected,
-                                         "current_fencing_token": lease.fencing_token if lease else None},
-                            )
+                self._validate_branch_leases(agent_id, branch, base)
                 branch_entries = {key: content_hash(value) for key, value in branch.current_data.items()}
                 result = detect_and_merge(base.entries, branch_entries, head.entries)
                 if result.success:
@@ -227,6 +213,9 @@ class Workspace:
             with self._lock:
                 if self._head_version != head.version_id:
                     continue  # HEAD a bougé pendant la décision : on refait la fusion
+                # Le résolveur s'exécute hors verrou : le lease peut avoir expiré
+                # ou avoir été repris pendant sa décision. Revalider juste avant commit.
+                self._validate_branch_leases(agent_id, branch, base)
                 return self._finalize(agent_id, branch, base, head, branch_entries,
                                       result.merged_data, decisions, resolver.name)
 
@@ -238,6 +227,26 @@ class Workspace:
             code="conflict_head_moved",
             attempts=max_retries + 1,
         )
+
+    def _validate_branch_leases(self, agent_id: str, branch: Branch, base: Snapshot) -> None:
+        """Reject commits whose write leases expired or were replaced."""
+        if not self._require_leases or branch._lease_exempt:
+            return
+        changed_keys = {key for key in set(base.data) | set(branch.current_data)
+                        if base.data.get(key) != branch.current_data.get(key)}
+        active = self._lease_manager.get_active_leases()
+        for key in changed_keys:
+            lease = active.get(key)
+            expected = branch.fencing_tokens.get(key)
+            if (lease is None or lease.agent_id != agent_id or expected is None
+                    or lease.fencing_token != expected):
+                raise LeaseError(
+                    f"Lease obsolète pour '{key}' : le commit de '{agent_id}' est refusé.",
+                    code="lease_fenced",
+                    details={"resource_key": key, "agent_id": agent_id,
+                             "expected_fencing_token": expected,
+                             "current_fencing_token": lease.fencing_token if lease else None},
+                )
 
     def _build_conflict(self, key: str, agent_id: str, branch: Branch, base: Snapshot,
                         head: Snapshot, branch_entries: Mapping[str, str]) -> Conflict:
