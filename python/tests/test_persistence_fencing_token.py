@@ -69,6 +69,7 @@ def test_lease_cannot_be_reacquired_between_final_validation_and_commit():
     workspace.acquire_lease("agent-a", "shared/document", duration_seconds=30)
     branch = workspace.create_branch("agent-a", "agent-a-work")
     branch.set("shared/document", "agent-a write")
+    workspace.seed({"shared/document": "concurrent update"})
 
     final_validation_entered = threading.Event()
     allow_finalization = threading.Event()
@@ -93,7 +94,8 @@ def test_lease_cannot_be_reacquired_between_final_validation_and_commit():
 
     def commit():
         try:
-            workspace.commit("agent-a", branch)
+            resolver = CallbackResolver(lambda conflict: Resolution.with_value("resolved write"), name="test-resolver")
+            workspace.commit("agent-a", branch, resolver=resolver)
         except Exception as exc:  # noqa: BLE001
             commit_errors.append(exc)
 
@@ -119,5 +121,5 @@ def test_lease_cannot_be_reacquired_between_final_validation_and_commit():
     assert not takeover_thread.is_alive()
     assert commit_errors == []
     assert takeover_acquired.is_set()
-    assert workspace.head.data["shared/document"] == "agent-a write"
+    assert workspace.head.data["shared/document"] == "resolved write"
     assert workspace._lease_manager.get_active_leases()["shared/document"].agent_id == "agent-b"
