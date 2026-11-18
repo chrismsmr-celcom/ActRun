@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type DragEvent } from "react";
 import {
   Activity, AlertTriangle, ArrowDownRight, ArrowRight, ArrowUpRight, Bot,
   Boxes, Check, ChevronDown, CircleHelp, Clock3, Command, GitBranch,
@@ -309,7 +309,7 @@ function TasksPage({ onNotify }: { onNotify: (message: string) => void }) {
     const next = taskColumns[Math.max(0,Math.min(taskColumns.length-1,index+direction))].status;
     updateTask(task.id,{status:next});
   };
-  const onDrop = (event: React.DragEvent<HTMLDivElement>, status: TaskStatus) => {
+  const onDrop = (event: DragEvent<HTMLDivElement>, status: TaskStatus) => {
     const id=event.dataTransfer.getData("text/task-id");
     if(id) updateTask(id,{status});
   };
