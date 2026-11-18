@@ -159,8 +159,14 @@ class TestLeaseCodes:
         lm_ws.acquire_lease("agent-a", "res/a2", 60)
         lm_ws.acquire_lease("agent-b", "res/b2", 60)
 
+        waiter_errors = []
+
         def a_waits_for_b():
-            lm_ws.acquire_lease("agent-a", "res/b2", wait=True, timeout_seconds=3)
+            try:
+                lm_ws.acquire_lease("agent-a", "res/b2", wait=True, timeout_seconds=3)
+            except LeaseError as exc:
+                # The other side detects the cycle; this waiter then times out.
+                waiter_errors.append(exc)
 
         th = threading.Thread(target=a_waits_for_b)
         th.start()
@@ -168,6 +174,9 @@ class TestLeaseCodes:
         with pytest.raises(DeadlockError) as info:
             lm_ws.acquire_lease("agent-b", "res/a2", wait=True, timeout_seconds=3)
         th.join(timeout=5)
+        assert not th.is_alive(), "le thread d'attente doit se terminer"
+        assert len(waiter_errors) == 1
+        assert waiter_errors[0].code == "lease_wait_timeout"
         assert info.value.code == "lease_deadlock"
         cycle = info.value.details["cycle"]
         resources = info.value.details["resources"]
