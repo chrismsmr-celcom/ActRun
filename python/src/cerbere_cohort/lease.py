@@ -22,6 +22,7 @@ class Lease:
     resource_key: str
     expires_at: float
     acquired_at: float
+    fencing_token: int = 0
 
     def is_expired(self) -> bool:
         return time.time() > self.expires_at
@@ -32,6 +33,7 @@ class LeaseManager:
     """
     def __init__(self):
         self._active_leases: Dict[str, Lease] = {}
+        self._fencing_counters: Dict[str, int] = {}
         self._events: List[CerbereCohortEvent] = []
         
         # Graphe d'attente pour détecter les deadlocks
@@ -120,11 +122,14 @@ class LeaseManager:
     def _create_lease(self, agent_id: str, resource_key: str, duration_seconds: float) -> Lease:
         """Crée et enregistre un nouveau lease."""
         now = time.time()
+        token = self._fencing_counters.get(resource_key, 0) + 1
+        self._fencing_counters[resource_key] = token
         lease = Lease(
             agent_id=agent_id,
             resource_key=resource_key,
             expires_at=now + duration_seconds,
-            acquired_at=now
+            acquired_at=now,
+            fencing_token=token,
         )
         self._active_leases[resource_key] = lease
         
@@ -134,7 +139,8 @@ class LeaseManager:
             payload={
                 "resource_key": resource_key,
                 "duration_seconds": duration_seconds,
-                "expires_at": lease.expires_at
+                "expires_at": lease.expires_at,
+                "fencing_token": lease.fencing_token,
             }
         ))
         return lease
