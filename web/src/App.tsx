@@ -35,6 +35,7 @@ const agents = [
   { name: "agent-frontend", role: "Frontend implementation", status: "Needs review", task: "Update application shell", color: "blue", initials: "FE" },
   { name: "agent-database", role: "Database operations", status: "Idle", task: "—", color: "green", initials: "DB" },
   { name: "agent-tests", role: "QA & testing", status: "Working", task: "Run integration suite", color: "orange", initials: "QA" },
+  { name: "agent-security", role: "Security review", status: "Idle", task: "—", color: "violet", initials: "SC" },
 ];
 
 const pageDescriptions: Record<Page, string> = {
