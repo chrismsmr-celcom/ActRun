@@ -4,7 +4,7 @@ import {
   Boxes, Check, ChevronDown, CircleHelp, Clock3, Command, GitBranch,
   LayoutDashboard, LockKeyhole, Menu, Moon, MoreHorizontal, Network,
   Plus, Search, Settings2, ShieldCheck, Sun, TerminalSquare, Workflow, X,
-  Zap
+  Zap, Filter, RefreshCw, Cpu, Timer, ChevronRight, CircleDot
 } from "lucide-react";
 
 type Page = "Overview" | "Agents" | "Tasks" | "Shared state" | "Leases" | "Conflicts" | "Event log" | "MCP server" | "Settings";
@@ -64,6 +64,7 @@ function App() {
 
   const pageContent = useMemo(() => {
     if (page === "Overview") return <Overview onNavigate={setPage} onCreate={() => setShowCreate(true)} />;
+    if (page === "Agents") return <AgentsPage onNotify={notify} />;
     return <PlaceholderPage page={page} onAction={() => notify(`${page} controls will be connected in a later step.`)} />;
   }, [page]);
 
@@ -194,6 +195,65 @@ function FlowNode({ icon: Icon, title, value, tone }: { icon: typeof Bot; title:
 function Status({ status }: { status: string }) {
   const cls = status === "Working" ? "working" : status === "Needs review" ? "review" : "idle";
   return <span className={`status-badge ${cls}`}><i />{status}</span>;
+}
+
+
+function AgentsPage({ onNotify }: { onNotify: (message: string) => void }) {
+  const [filter, setFilter] = useState("All agents");
+  const [query, setQuery] = useState("");
+  const [selected, setSelected] = useState<(typeof agents)[number] | null>(null);
+  const filtered = agents.filter(agent => {
+    const matchesFilter = filter === "All agents" ||
+      (filter === "Working" && agent.status === "Working") ||
+      (filter === "Idle" && agent.status === "Idle") ||
+      (filter === "Needs review" && agent.status === "Needs review");
+    const matchesQuery = `${agent.name} ${agent.role} ${agent.task}`.toLowerCase().includes(query.toLowerCase());
+    return matchesFilter && matchesQuery;
+  });
+
+  return <>
+    <section className="agents-summary">
+      <div className="agents-summary-copy"><div className="summary-icon"><Bot size={20}/></div><div><strong>Agent registry</strong><p>One place to inspect the agents participating in this workspace.</p></div></div>
+      <span className="sample-data-label"><span/> SAMPLE DATA</span>
+    </section>
+    <section className="agent-metrics">
+      <div className="agent-metric"><span>Total agents</span><strong>05</strong><small>Registered in workspace</small></div>
+      <div className="agent-metric"><span>Working</span><strong className="metric-green">02</strong><small>Currently executing tasks</small></div>
+      <div className="agent-metric"><span>Needs review</span><strong className="metric-amber">01</strong><small>Waiting for attention</small></div>
+      <div className="agent-metric"><span>Idle</span><strong>02</strong><small>Available for assignment</small></div>
+    </section>
+    <section className="panel agent-registry-panel">
+      <div className="registry-toolbar">
+        <div><h2>All agents <span className="count-chip">{filtered.length}</span></h2><p>Inspect status, workload and runtime identity.</p></div>
+        <button className="secondary-button" onClick={() => onNotify("Agent registration will be connected to the runtime later.")}><Plus size={15}/> Register agent</button>
+      </div>
+      <div className="registry-controls">
+        <label className="registry-search"><Search size={15}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Find an agent..."/></label>
+        <div className="filter-control"><Filter size={14}/><select value={filter} onChange={e=>setFilter(e.target.value)}><option>All agents</option><option>Working</option><option>Idle</option><option>Needs review</option></select><ChevronDown size={13}/></div>
+        <button className="icon-button refresh-button" onClick={()=>onNotify("Sample agent list refreshed. No runtime is connected.")} aria-label="Refresh agent list"><RefreshCw size={15}/></button>
+      </div>
+      <div className="registry-table">
+        <div className="registry-table-head"><span>AGENT</span><span>STATUS</span><span>ASSIGNED WORK</span><span>LAST ACTIVITY</span><span/></div>
+        {filtered.map((agent,index)=><button className="registry-row" key={agent.name} onClick={()=>setSelected(agent)}>
+          <div className="registry-agent"><div className={`agent-avatar ${agent.color}`}>{agent.initials}</div><div><strong>{agent.name}</strong><span>{agent.role}</span></div></div>
+          <div><Status status={agent.status}/></div>
+          <div className="registry-task"><span>{agent.task}</span><small>{agent.status==="Idle"?"No active task":"1 task assigned"}</small></div>
+          <div className="last-activity"><span className="activity-pulse"/>{index===0?"Just now":index===1?"4 min ago":index===2?"12 min ago":"18 min ago"}</div>
+          <ChevronRight size={16} className="registry-chevron"/>
+        </button>)}
+        {filtered.length===0&&<div className="registry-empty"><Search size={20}/><strong>No agents found</strong><span>Try another name or status filter.</span></div>}
+      </div>
+      <div className="registry-footer"><span>Showing {filtered.length} of 5 sample agents</span><span>Live updates unavailable in preview</span></div>
+    </section>
+    <section className="agent-note"><div><Cpu size={17}/></div><p><strong>Agent identity is separate from agent activity.</strong><br/>When connected, this view will show registered identities, heartbeat state, assigned work and execution metadata from the Cohort runtime.</p></section>
+    {selected&&<div className="modal-backdrop" onClick={()=>setSelected(null)}><div className="agent-detail-modal" onClick={e=>e.stopPropagation()}>
+      <div className="agent-detail-head"><div className={`agent-avatar large ${selected.color}`}>{selected.initials}</div><div><span className="eyebrow">AGENT DETAILS · SAMPLE</span><h2>{selected.name}</h2><p>{selected.role}</p></div><button className="icon-button" onClick={()=>setSelected(null)} aria-label="Close agent details"><X size={18}/></button></div>
+      <div className="detail-status-row"><Status status={selected.status}/><span><CircleDot size={12}/> Local preview identity</span></div>
+      <div className="detail-grid"><div><span>Current task</span><strong>{selected.task}</strong></div><div><span>Heartbeat</span><strong>Not connected</strong></div><div><span>Agent ID</span><strong className="mono-value">agt_demo_{selected.initials.toLowerCase()}</strong></div><div><span>Last activity</span><strong>Sample timestamp</strong></div></div>
+      <div className="detail-info"><Timer size={15}/><span>Runtime telemetry, token usage and tool execution history will appear after integration.</span></div>
+      <div className="modal-actions"><button className="secondary-button" onClick={()=>setSelected(null)}>Close</button><button className="primary-button" onClick={()=>{setSelected(null);onNotify("Agent actions will be enabled after runtime integration.");}}>Agent actions <ArrowRight size={14}/></button></div>
+    </div></div>}
+  </>;
 }
 
 function PlaceholderPage({ page, onAction }: { page: Page; onAction: () => void }) {
