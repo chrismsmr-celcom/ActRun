@@ -7,6 +7,8 @@ Permet la reprise après arrêt et le replay déterministe.
 import json
 import sqlite3
 import threading
+
+from .merge import ConflictError
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 
@@ -33,7 +35,7 @@ class PersistentWorkspace:
         """
         self.db_path = Path(db_path)
         self.auto_save = auto_save
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
         
         # Workspace en mémoire : reconstruit par replay du journal au chargement
         self._workspace = Workspace()
@@ -41,8 +43,9 @@ class PersistentWorkspace:
         self._persisted_hashes: set[str] = set()
         
         # Connexion SQLite
-        self._conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
+        self._conn = sqlite3.connect(str(self.db_path), timeout=30.0, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
+        self._conn.execute("PRAGMA busy_timeout=30000")
         
         # Activer le mode WAL pour de meilleures performances
         self._conn.execute("PRAGMA journal_mode=WAL")
@@ -92,6 +95,8 @@ class PersistentWorkspace:
     def _load_from_db(self):
         """Reconstruit le workspace par REPLAY du journal (les ids sont vérifiés)."""
         with self._lock:
+            self._persisted_ids.clear()
+            self._persisted_hashes.clear()
             store = ContentStore()
             for r in self._conn.execute("SELECT hash, content FROM objects"):
                 store.load_text(r['hash'], r['content'])
@@ -134,29 +139,17 @@ class PersistentWorkspace:
     
     def create_branch(self, agent_id: str, branch_name: str) -> Branch:
         """Crée une branche et la persiste."""
-        branch = self._workspace.create_branch(agent_id, branch_name)
-        if self.auto_save:
-            self._save_new_events()
-        return branch
+        return self._mutate(lambda: self._workspace.create_branch(agent_id, branch_name))
     
     def commit(self, agent_id: str, branch: Branch, resolver=None, max_retries: int = 3) -> Snapshot:
         """Committe et persiste le nouveau snapshot."""
-        try:
-            snapshot = self._workspace.commit(agent_id, branch, resolver=resolver, max_retries=max_retries)
-        finally:
-            # le conflit est aussi un événement : on le persiste même si commit lève
-            if self.auto_save:
-                self._save_new_objects()
-                self._save_new_events()
-        return snapshot
+        return self._mutate(
+            lambda: self._workspace.commit(agent_id, branch, resolver=resolver, max_retries=max_retries)
+        )
 
     def seed(self, data: Dict[str, Any], agent_id: str = "system") -> Snapshot:
         """Initialise l'état par un commit journalisé et persisté."""
-        snapshot = self._workspace.seed(data, agent_id)
-        if self.auto_save:
-            self._save_new_objects()
-            self._save_new_events()
-        return snapshot
+        return self._mutate(lambda: self._workspace.seed(data, agent_id))
 
     @property
     def store(self) -> ContentStore:
@@ -164,22 +157,56 @@ class PersistentWorkspace:
     
     def acquire_lease(self, agent_id: str, resource_key: str, duration_seconds: float = 30.0, **kwargs) -> Lease:
         """Acquiert un lease et le persiste."""
-        lease = self._workspace.acquire_lease(agent_id, resource_key, duration_seconds, **kwargs)
-        if self.auto_save:
+        def operation():
+            lease = self._workspace.acquire_lease(agent_id, resource_key, duration_seconds, **kwargs)
             self._save_lease(lease)
-            self._save_new_events()
-        return lease
+            return lease
+        return self._mutate(operation)
     
     def release_lease(self, agent_id: str, resource_key: str) -> None:
         """Libère un lease et le persiste."""
-        self._workspace.release_lease(agent_id, resource_key)
-        if self.auto_save:
+        def operation():
+            self._workspace.release_lease(agent_id, resource_key)
             self._delete_lease(resource_key)
-            self._save_new_events()
+        self._mutate(operation)
     
     def get_events(self) -> List[CerbereCohortEvent]:
         return self._workspace.get_events()
     
+    def _mutate(self, operation):
+        """
+        Exécute une mutation comme une seule transaction SQLite inter-processus.
+
+        BEGIN IMMEDIATE sérialise les writers. Le replay est refait APRÈS
+        l'acquisition du verrou SQLite : une instance ancienne ne peut donc
+        jamais committer contre un HEAD périmé.
+        """
+        if not self.auto_save:
+            return operation()
+
+        with self._lock:
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                self._load_from_db()
+                try:
+                    result = operation()
+                except ConflictError:
+                    # Un conflit est un résultat métier journalisé, pas une
+                    # erreur de persistance : conserver ses événements.
+                    self._save_new_objects()
+                    self._save_new_events()
+                    self._conn.commit()
+                    raise
+                self._save_new_objects()
+                self._save_new_events()
+                self._conn.commit()
+                return result
+            except ConflictError:
+                raise
+            except BaseException:
+                self._conn.rollback()
+                raise
+
     # === Méthodes de persistance ===
     
     def _save_new_objects(self):
@@ -190,7 +217,6 @@ class PersistentWorkspace:
                 if digest not in self._persisted_hashes:
                     self._conn.execute("INSERT OR IGNORE INTO objects (hash, content) VALUES (?, ?)", (digest, text))
                     self._persisted_hashes.add(digest)
-            self._conn.commit()
     
     def _save_lease(self, lease: Lease):
         """Sauvegarde un lease dans SQLite."""
@@ -199,13 +225,11 @@ class PersistentWorkspace:
                 "INSERT OR REPLACE INTO leases (resource_key, agent_id, expires_at, acquired_at) VALUES (?, ?, ?, ?)",
                 (lease.resource_key, lease.agent_id, lease.expires_at, lease.acquired_at)
             )
-            self._conn.commit()
     
     def _delete_lease(self, resource_key: str):
         """Supprime un lease de SQLite."""
         with self._lock:
             self._conn.execute("DELETE FROM leases WHERE resource_key = ?", (resource_key,))
-            self._conn.commit()
     
     def _save_new_events(self):
         """Persiste tous les événements pas encore écrits (workspace ET leases)."""
@@ -226,7 +250,6 @@ class PersistentWorkspace:
                     ),
                 )
                 self._persisted_ids.add(event.event_id)
-            self._conn.commit()
 
     # === Méthodes utilitaires ===
     
