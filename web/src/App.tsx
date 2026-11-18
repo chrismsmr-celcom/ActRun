@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type DragEvent } from "react";
 import {
   Activity, AlertTriangle, ArrowDownRight, ArrowRight, ArrowUpRight, Bot,
   Boxes, Check, ChevronDown, CircleHelp, Clock3, Command, GitBranch,
@@ -66,6 +66,7 @@ function App() {
   const pageContent = useMemo(() => {
     if (page === "Overview") return <Overview onNavigate={setPage} onCreate={() => setShowCreate(true)} />;
     if (page === "Agents") return <AgentsPage onNotify={notify} />;
+    if (page === "Tasks") return <TasksPage onNotify={notify} />;
     return <PlaceholderPage page={page} onAction={() => notify(`${page} controls will be connected in a later step.`)} />;
   }, [page]);
 
@@ -255,6 +256,104 @@ function AgentsPage({ onNotify }: { onNotify: (message: string) => void }) {
       <div className="modal-actions"><button className="secondary-button" onClick={()=>setSelected(null)}>Close</button><button className="primary-button" onClick={()=>{setSelected(null);onNotify("Agent actions will be enabled after runtime integration.");}}>Agent actions <ArrowRight size={14}/></button></div>
     </div></div>}
   </>;
+}
+
+
+type TaskStatus = "Backlog" | "Assigned" | "In progress" | "Review" | "Completed";
+type TaskPriority = "Low" | "Medium" | "High" | "Urgent";
+type CohortTask = { id: string; title: string; description: string; status: TaskStatus; priority: TaskPriority; assignee: string; due: string; dependencies: string[]; tags: string[] };
+const taskColumns: { status: TaskStatus; tone: string }[] = [
+  { status: "Backlog", tone: "slate" },
+  { status: "Assigned", tone: "blue" },
+  { status: "In progress", tone: "violet" },
+  { status: "Review", tone: "amber" },
+  { status: "Completed", tone: "green" },
+];
+const initialTasks: CohortTask[] = [
+  { id:"TSK-041",title:"Define authentication API contract",description:"Agree on the authentication endpoints, request payloads and response schemas before implementation begins.",status:"Backlog",priority:"High",assignee:"Unassigned",due:"Nov 21",dependencies:[],tags:["API","Planning"] },
+  { id:"TSK-042",title:"Prepare staging database schema",description:"Create the initial schema and migration plan for the staging environment.",status:"Backlog",priority:"Medium",assignee:"Unassigned",due:"Nov 22",dependencies:[],tags:["Database"] },
+  { id:"TSK-038",title:"Implement user API routes",description:"Build the user endpoints and align them with the shared API schema.",status:"Assigned",priority:"High",assignee:"agent-backend",due:"Nov 20",dependencies:["TSK-041"],tags:["Backend","API"] },
+  { id:"TSK-039",title:"Create application shell",description:"Implement the responsive application shell and connect the core navigation.",status:"Assigned",priority:"Medium",assignee:"agent-frontend",due:"Nov 23",dependencies:[],tags:["Frontend","UI"] },
+  { id:"TSK-035",title:"Build shared state adapter",description:"Implement the adapter used by agents to read and write versioned shared state.",status:"In progress",priority:"Urgent",assignee:"agent-backend",due:"Nov 19",dependencies:["TSK-041"],tags:["Core","Shared state"] },
+  { id:"TSK-036",title:"Run integration test suite",description:"Validate the API and shared-state flows against the current integration test suite.",status:"In progress",priority:"High",assignee:"agent-tests",due:"Nov 20",dependencies:["TSK-035"],tags:["QA","Testing"] },
+  { id:"TSK-032",title:"Review route permissions",description:"Check route-level permissions and report any missing authorization checks.",status:"Review",priority:"High",assignee:"agent-security",due:"Nov 19",dependencies:["TSK-038"],tags:["Security"] },
+  { id:"TSK-029",title:"Document workspace conventions",description:"Write the initial conventions for agent branches, shared keys and commit messages.",status:"Completed",priority:"Low",assignee:"agent-tests",due:"Nov 16",dependencies:[],tags:["Docs"] },
+];
+
+function TasksPage({ onNotify }: { onNotify: (message: string) => void }) {
+  const [tasks, setTasks] = useState<CohortTask[]>(initialTasks);
+  const [query, setQuery] = useState("");
+  const [priority, setPriority] = useState("All priorities");
+  const [selected, setSelected] = useState<CohortTask | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [newTitle, setNewTitle] = useState("");
+  const [newAssignee, setNewAssignee] = useState("Unassigned");
+  const [newPriority, setNewPriority] = useState<TaskPriority>("Medium");
+  const [newDue, setNewDue] = useState("Nov 25");
+  const filtered = tasks.filter(task => {
+    const matchesText = `${task.id} ${task.title} ${task.assignee} ${task.tags.join(" ")}`.toLowerCase().includes(query.toLowerCase());
+    return matchesText && (priority === "All priorities" || task.priority === priority);
+  });
+  const counts = (status: TaskStatus) => tasks.filter(task => task.status === status).length;
+  const updateTask = (id: string, patch: Partial<CohortTask>) => {
+    setTasks(current => current.map(task => task.id === id ? { ...task, ...patch } : task));
+    setSelected(current => current?.id === id ? { ...current, ...patch } : current);
+  };
+  const createTask = () => {
+    if (!newTitle.trim()) return;
+    const task: CohortTask = { id:`TSK-${String(43 + tasks.length - initialTasks.length).padStart(3,"0")}`,title:newTitle.trim(),description:"New task created in the local interface preview.",status:newAssignee==="Unassigned"?"Backlog":"Assigned",priority:newPriority,assignee:newAssignee,due:newDue,dependencies:[],tags:["New"] };
+    setTasks(current=>[task,...current]); setCreating(false); setNewTitle(""); onNotify("Task added to this local preview. It has not been saved to the runtime.");
+  };
+  const moveTask = (task: CohortTask, direction: -1 | 1) => {
+    const index = taskColumns.findIndex(column=>column.status===task.status);
+    const next = taskColumns[Math.max(0,Math.min(taskColumns.length-1,index+direction))].status;
+    updateTask(task.id,{status:next});
+  };
+  const onDrop = (event: DragEvent<HTMLDivElement>, status: TaskStatus) => {
+    const id=event.dataTransfer.getData("text/task-id");
+    if(id) updateTask(id,{status});
+  };
+
+  return <>
+    <section className="tasks-summary">
+      <div className="tasks-summary-left"><div className="summary-icon"><Workflow size={20}/></div><div><strong>Task orchestration</strong><p>Coordinate work, ownership and dependencies across your agent cohort.</p></div></div>
+      <span className="sample-data-label"><span/> SAMPLE DATA</span>
+    </section>
+    <section className="task-stats">
+      <div><span>Total tasks</span><strong>{String(tasks.length).padStart(2,"0")}</strong><small>Across this workspace</small></div>
+      <div><span>In progress</span><strong className="metric-violet">{String(counts("In progress")).padStart(2,"0")}</strong><small>Currently being executed</small></div>
+      <div><span>In review</span><strong className="metric-amber">{String(counts("Review")).padStart(2,"0")}</strong><small>Awaiting verification</small></div>
+      <div><span>Completed</span><strong className="metric-green">{String(counts("Completed")).padStart(2,"0")}</strong><small>Finished tasks</small></div>
+    </section>
+    <section className="panel task-board-panel">
+      <div className="task-board-toolbar"><div><h2>Task board <span className="count-chip">{filtered.length} tasks</span></h2><p>Move cards between stages as work progresses.</p></div><button className="primary-button" onClick={()=>setCreating(true)}><Plus size={15}/> New task</button></div>
+      <div className="task-filters"><label className="registry-search"><Search size={15}/><input value={query} onChange={e=>setQuery(e.target.value)} placeholder="Search tasks..."/></label><div className="filter-control"><Filter size={14}/><select value={priority} onChange={e=>setPriority(e.target.value)}><option>All priorities</option><option>Urgent</option><option>High</option><option>Medium</option><option>Low</option></select><ChevronDown size={13}/></div><span className="drag-hint">Drag cards to change status</span></div>
+      <div className="kanban-board">{taskColumns.map(column=>{
+        const columnTasks=filtered.filter(task=>task.status===column.status);
+        return <div className="kanban-column" key={column.status} onDragOver={e=>e.preventDefault()} onDrop={e=>onDrop(e,column.status)}>
+          <div className="kanban-column-head"><div><span className={`column-indicator ${column.tone}`}/><strong>{column.status}</strong><small>{counts(column.status)}</small></div><button className="column-more" onClick={()=>onNotify(`Options for ${column.status} will be connected later.`)} aria-label={`More options for ${column.status}`}><MoreHorizontal size={16}/></button></div>
+          <div className="kanban-cards">{columnTasks.map(task=><article className="task-card" key={task.id} draggable onDragStart={e=>e.dataTransfer.setData("text/task-id",task.id)} onClick={()=>setSelected(task)}>
+            <div className="task-card-top"><span>{task.id}</span><PriorityBadge priority={task.priority}/></div>
+            <h3>{task.title}</h3><p>{task.description}</p>
+            <div className="task-tags">{task.tags.map(tag=><span key={tag}>{tag}</span>)}</div>
+            {task.dependencies.length>0&&<div className="task-dependency"><GitBranch size={12}/> Depends on {task.dependencies.join(", ")}</div>}
+            <div className="task-card-foot"><div className="task-assignee"><span className={`assignee-avatar ${task.assignee==="Unassigned"?"unassigned":task.assignee==="agent-backend"?"violet":task.assignee==="agent-frontend"?"blue":task.assignee==="agent-tests"?"orange":"green"}`}>{task.assignee==="Unassigned"?"—":task.assignee.split("-")[1]?.slice(0,2).toUpperCase()}</span><span>{task.assignee==="Unassigned"?"Unassigned":task.assignee}</span></div><span className="task-due"><Clock3 size={12}/>{task.due}</span></div>
+            <div className="task-quick-actions"><button onClick={e=>{e.stopPropagation();moveTask(task,-1)}} disabled={column.status==="Backlog"}>←</button><button onClick={e=>{e.stopPropagation();moveTask(task,1)}} disabled={column.status==="Completed"}>→</button></div>
+          </article>)}
+          {columnTasks.length===0&&<div className="kanban-empty">No tasks in this stage</div>}
+          </div>
+          {column.status==="Backlog"&&<button className="add-task-inline" onClick={()=>setCreating(true)}><Plus size={14}/> Add a task</button>}
+        </div>;
+      })}</div>
+      <div className="board-footnote"><span><i/> Local preview state</span><span>Changes are held in this browser session only. Runtime persistence is not connected.</span></div>
+    </section>
+    {creating&&<div className="modal-backdrop" onClick={()=>setCreating(false)}><div className="task-modal" onClick={e=>e.stopPropagation()}><div className="modal-head"><div><span className="eyebrow">TASK ORCHESTRATION</span><h2>Create a task</h2></div><button className="icon-button" onClick={()=>setCreating(false)}><X size={18}/></button></div><p className="modal-copy">Add a task to the local board preview. Backend persistence will be connected later.</p><label className="field-label">Task title<input autoFocus value={newTitle} onChange={e=>setNewTitle(e.target.value)} placeholder="What needs to be done?"/></label><div className="task-form-grid"><label className="field-label">Assign to<select value={newAssignee} onChange={e=>setNewAssignee(e.target.value)}><option>Unassigned</option>{agents.map(agent=><option key={agent.name}>{agent.name}</option>)}</select></label><label className="field-label">Priority<select value={newPriority} onChange={e=>setNewPriority(e.target.value as TaskPriority)}><option>Low</option><option>Medium</option><option>High</option><option>Urgent</option></select></label></div><label className="field-label">Due date<input value={newDue} onChange={e=>setNewDue(e.target.value)} placeholder="e.g. Nov 25"/></label><div className="modal-actions"><button className="secondary-button" onClick={()=>setCreating(false)}>Cancel</button><button className="primary-button" disabled={!newTitle.trim()} onClick={createTask}>Create task <ArrowRight size={14}/></button></div></div></div>}
+    {selected&&<div className="modal-backdrop" onClick={()=>setSelected(null)}><div className="task-modal task-detail-modal" onClick={e=>e.stopPropagation()}><div className="modal-head"><div><span className="eyebrow">{selected.id} · TASK DETAILS</span><h2>{selected.title}</h2></div><button className="icon-button" onClick={()=>setSelected(null)}><X size={18}/></button></div><p className="task-detail-description">{selected.description}</p><div className="task-detail-fields"><label className="field-label">Status<select value={selected.status} onChange={e=>updateTask(selected.id,{status:e.target.value as TaskStatus})}>{taskColumns.map(column=><option key={column.status}>{column.status}</option>)}</select></label><label className="field-label">Priority<select value={selected.priority} onChange={e=>updateTask(selected.id,{priority:e.target.value as TaskPriority})}><option>Low</option><option>Medium</option><option>High</option><option>Urgent</option></select></label><label className="field-label">Assignee<select value={selected.assignee} onChange={e=>updateTask(selected.id,{assignee:e.target.value})}><option>Unassigned</option>{agents.map(agent=><option key={agent.name}>{agent.name}</option>)}</select></label><label className="field-label">Due date<input value={selected.due} onChange={e=>updateTask(selected.id,{due:e.target.value})}/></label></div><div className="task-detail-dependencies"><strong>Dependencies</strong>{selected.dependencies.length?selected.dependencies.map(dep=><span key={dep}><GitBranch size={12}/>{dep}</span>):<small>No dependencies defined</small>}</div><div className="modal-actions"><button className="secondary-button" onClick={()=>setSelected(null)}>Close</button><button className="primary-button" onClick={()=>{setSelected(null);onNotify("Task changes are saved in this local preview only.");}}>Save changes <Check size={14}/></button></div></div></div>}
+  </>;
+}
+
+function PriorityBadge({priority}:{priority:TaskPriority}) {
+  return <span className={`priority-badge ${priority.toLowerCase()}`}><i/>{priority}</span>;
 }
 
 function PlaceholderPage({ page, onAction }: { page: Page; onAction: () => void }) {
