@@ -81,7 +81,7 @@ def test_production_membership_uses_configured_runtime_connection(monkeypatch):
     })
     monkeypatch.setattr(auth, "_membership_cache", {})
     db = _FakeMembershipDB(role="owner")
-    auth.configure_membership_db(db)
+    monkeypatch.setattr(auth, "_membership_db", db)
 
     result = require_workspace_member(
         authorization="Bearer valid-token",
@@ -106,7 +106,7 @@ def test_production_membership_db_failure_is_fail_closed(monkeypatch):
         "sub": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
     })
     monkeypatch.setattr(auth, "_membership_cache", {})
-    auth.configure_membership_db(_FakeMembershipDB(error=RuntimeError("database unavailable")))
+    monkeypatch.setattr(auth, "_membership_db", _FakeMembershipDB(error=RuntimeError("database unavailable")))
 
     try:
         require_workspace_member(
