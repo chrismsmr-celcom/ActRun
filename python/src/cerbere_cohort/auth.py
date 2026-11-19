@@ -12,7 +12,7 @@ from typing import Any
 from uuid import UUID
 
 import jwt
-from fastapi import Header, HTTPException
+from fastapi import Depends, Header, HTTPException
 
 
 def _required_env(name: str) -> str:
@@ -107,10 +107,8 @@ def require_workspace_member(
     }
 
 
-def require_workspace_writer(context: dict[str, Any] = None) -> dict[str, Any]:
+def require_workspace_writer(context: dict[str, Any] = Depends(require_workspace_member)) -> dict[str, Any]:
     """Require an active member with write privileges."""
-    # FastAPI injects the authenticated membership context through this wrapper.
-    from fastapi import Depends
     if context is None:
         raise HTTPException(status_code=401, detail="Authentication required")
     if context.get("role") not in {"owner", "admin", "member"} and context.get("user_id") != "local":
