@@ -10,6 +10,7 @@ services:
       COHORT_REQUIRE_LEASES: "true"
       COHORT_TELEMETRY: "${COHORT_TELEMETRY:-false}"
       COHORT_TELEMETRY_URL: "${COHORT_TELEMETRY_URL:-}"
+      COHORT_TELEMETRY_ID_PATH: /data/telemetry-id
     ports:
       # Local-only by default. Do not expose this unauthenticated SQLite mode publicly.
       - "127.0.0.1:8000:8000"
