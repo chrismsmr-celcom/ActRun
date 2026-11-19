@@ -1,7 +1,7 @@
 """Cerbere Cohort MCP server.
 
 The default transport is Streamable HTTP so multiple MCP clients can share one
-SQLite-backed workspace. Bind to loopback unless an authenticated proxy is used.
+database-backed workspace. Bind to loopback unless an authenticated proxy is used.
 """
 from __future__ import annotations
 
@@ -18,7 +18,6 @@ from mcp.server.fastmcp.exceptions import ToolError
 
 from cerbere_cohort.errors import CerbereError
 from cerbere_cohort.persistence import PersistentWorkspace
-from cerbere_cohort.postgres import PostgresPersistentWorkspace
 from cerbere_cohort.postgres import PostgresPersistentWorkspace
 from cerbere_cohort.workspace import Branch
 
