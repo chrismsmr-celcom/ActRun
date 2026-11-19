@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Activity, Command, Database, GitBranch, LayoutDashboard, LogOut, MessageSquare, Moon, PanelLeftClose, PanelLeftOpen, RefreshCw, ScrollText, Settings2, Sun } from "lucide-react";
+import { Activity, BarChart3, Command, Database, GitBranch, LayoutDashboard, LogOut, MessageSquare, Moon, PanelLeftClose, PanelLeftOpen, RefreshCw, ScrollText, Settings2, Sun } from "lucide-react";
 import cohortLogo from "./cohortLogo";
 import "./cohort-dashboard.css";
 import "./beta.css";
 import { organizationId, supabase } from "./auth";
 
-type Tab = "Overview" | "Branches" | "State" | "Event log" | "Settings";
+type Tab = "Overview" | "Branches" | "State" | "Event log" | "Settings" | "Traction";
 type EventItem = { event_id: string; timestamp: string; agent_id: string; action: string; payload: Record<string, unknown>; schema_version: string };
 type Branch = { id: string; name: string; agent_id: string; base_version: string; status: string; conflicting_keys: string[]; created_at: string };
 type StateItem = { key: string; value_hash: string; value: unknown };
@@ -236,7 +236,7 @@ export default function CohortDashboard({ userEmail, onSignOut }: { userEmail?: 
           {item:"Branches" as Tab, icon:<GitBranch size={17}/>, label:"Branches"},
           {item:"State" as Tab, icon:<Database size={17}/>, label:"Shared state"},
           {item:"Event log" as Tab, icon:<ScrollText size={17}/>, label:"Event log"},
-          {item:"Settings" as Tab, icon:<Settings2 size={17}/>, label:"Settings"}
+          {item:"Settings" as Tab, icon:<Settings2 size={17}/>, label:"Settings"}, {item:"Traction" as Tab, icon:<BarChart3 size={17}/>, label:"Traction"}
         ]).map(({item,icon,label}) => <button key={item} className={tab===item?"nav-link active":"nav-link"} onClick={()=>{setTab(item);setMobileNavOpen(false)}} title={navCollapsed?label:undefined}><span className="nav-icon">{icon}</span><span className="nav-label">{label}</span>{item==="Branches"&&openBranches.length>0&&<small>{openBranches.length}</small>}</button>)}
       </nav>
       <div className="nav-bottom">
