@@ -1,20 +1,14 @@
-"""PostgreSQL persistence backend for Cohort.
-
-Uses the same replay-verified event model as PersistentWorkspace. A transaction-
-scoped advisory lock serializes workspace mutations across API instances.
-"""
+"""PostgreSQL adapter for Cohort's replay-verified persistence engine."""
 from __future__ import annotations
 
 import re
 import threading
-from typing import Any
 
 from .persistence import PersistentWorkspace
-from .lease import Lease
 
 
-class _HybridRow(dict):
-    """Mapping row compatible with sqlite3.Row's integer indexing."""
+class _Row(dict):
+    """Dict row that also supports sqlite-style positional indexing."""
     def __getitem__(self, key):
         if isinstance(key, int):
             return tuple(self.values())[key]
@@ -23,77 +17,87 @@ class _HybridRow(dict):
 
 def _row_factory(cursor):
     names = [column.name for column in cursor.description]
-    return _HybridRow(zip(names, row) for row in cursor)
+    def make_row(values):
+        return _Row(zip(names, values))
+    return make_row
 
 
-class _PostgresConnection:
-    """Small DB-API compatibility layer for the existing persistence engine."""
+class _Connection:
+    """Translate the small SQLite SQL subset used by PersistentWorkspace."""
     def __init__(self, dsn: str):
         try:
             import psycopg
-            from psycopg.rows import dict_row
         except ImportError as exc:
-            raise RuntimeError(
-                "PostgreSQL support requires psycopg[binary]>=3.2. "
-                "Install the production dependencies."
-            ) from exc
-        self._conn = psycopg.connect(dsn, row_factory=dict_row, connect_timeout=15)
+            raise RuntimeError("Install psycopg[binary]>=3.2 for PostgreSQL support") from exc
+        self._db = psycopg.connect(dsn, row_factory=_row_factory, connect_timeout=15)
+        self._lock = threading.RLock()
 
     @staticmethod
-    def _sql(statement: str) -> str:
-        sql = statement.strip()
-        if sql.upper() == "BEGIN IMMEDIATE":
+    def _translate(sql: str) -> str:
+        statement = sql.strip()
+        upper = statement.upper()
+        if upper == "BEGIN IMMEDIATE":
             return "BEGIN"
-        sql = re.sub(r"^INSERT\\s+OR\\s+IGNORE\\s+INTO", "INSERT INTO", sql, flags=re.I)
-        sql = sql.replace("?", "%s")
-        sql = re.sub(r"ORDER\\s+BY\\s+rowid", "ORDER BY seq", sql, flags=re.I)
-        if re.match(r"^INSERT INTO", sql, flags=re.I) and "ON CONFLICT" not in sql.upper():
-            sql = sql.rstrip().rstrip(";") + " ON CONFLICT DO NOTHING"
-        return sql
+        statement = re.sub(r"^INSERT\\s+OR\\s+IGNORE\\s+INTO", "INSERT INTO", statement, flags=re.I)
+        if re.match(r"^INSERT\\s+OR\\s+REPLACE\\s+INTO", statement, flags=re.I):
+            statement = re.sub(r"^INSERT\\s+OR\\s+REPLACE\\s+INTO", "INSERT INTO", statement, flags=re.I)
+            match = re.search(r"INSERT INTO\\s+([\\w]+)\\s*\\(([^)]+)\\)\\s*VALUES", statement, flags=re.I)
+            if not match:
+                raise ValueError("Unsupported INSERT OR REPLACE statement")
+            table = match.group(1)
+            columns = [c.strip() for c in match.group(2).split(",")]
+            key = "resource_key" if table.lower() == "leases" else columns[0]
+            updates = [c for c in columns if c != key]
+            clause = ", ".join(f"{c}=EXCLUDED.{c}" for c in updates)
+            statement += f" ON CONFLICT ({key}) DO UPDATE SET {clause}"
+        statement = re.sub(r"ORDER\\s+BY\\s+rowid", "ORDER BY seq", statement, flags=re.I)
+        statement = statement.replace("MAX(fencing_token, excluded.fencing_token)",
+                                      "GREATEST(lease_counters.fencing_token, EXCLUDED.fencing_token)")
+        return statement.replace("?", "%s")
 
-    def execute(self, statement: str, parameters=()):
-        sql = self._sql(statement)
-        cursor = self._conn.execute(sql, parameters)
-        if statement.strip().upper() == "BEGIN IMMEDIATE":
-            # All writers for this logical workspace serialize across processes.
-            self._conn.execute(
-                "SELECT pg_advisory_xact_lock(hashtext('cerbere-cohort-runtime'))"
-            )
-        return cursor
+    def execute(self, sql: str, params=()):
+        with self._lock:
+            cursor = self._db.execute(self._translate(sql), params)
+            if sql.strip().upper() == "BEGIN IMMEDIATE":
+                self._db.execute("SELECT pg_advisory_xact_lock(hashtext('cerbere-cohort-runtime'))")
+            return cursor
 
     def commit(self):
-        self._conn.commit()
+        with self._lock:
+            self._db.commit()
 
     def rollback(self):
-        self._conn.rollback()
+        with self._lock:
+            self._db.rollback()
 
     def close(self):
-        self._conn.close()
+        self._db.close()
 
 
 class PostgresPersistentWorkspace(PersistentWorkspace):
-    """PostgreSQL-backed implementation of PersistentWorkspace.
+    """PersistentWorkspace backed by Supabase PostgreSQL.
 
-    DATABASE_URL must be a PostgreSQL connection string. Schema migrations are
-    additive and safe to run at process startup.
+    DATABASE_URL is read from the deployment environment by the caller.
+    The advisory transaction lock serializes workspace writes across instances.
     """
-    def __init__(self, database_url: str, auto_save: bool = True, require_leases: bool = False):
+    def __init__(self, database_url: str, auto_save: bool = True,
+                 require_leases: bool = False):
         if not database_url.startswith(("postgres://", "postgresql://")):
-            raise ValueError("DATABASE_URL must use postgres:// or postgresql://")
+            raise ValueError("A PostgreSQL DATABASE_URL is required")
         self.db_path = database_url
         self.auto_save = auto_save
         self.require_leases = require_leases
         self._lock = threading.RLock()
         from .workspace import Workspace
-        self._workspace = Workspace(require_leases=self.require_leases)
+        self._workspace = Workspace(require_leases=require_leases)
         self._persisted_ids: set[str] = set()
         self._persisted_hashes: set[str] = set()
-        self._conn = _PostgresConnection(database_url)
+        self._conn = _Connection(database_url)
         self._init_schema()
         self._load_from_db()
 
     def _init_schema(self):
-        statements = [
+        schema = (
             """CREATE TABLE IF NOT EXISTS objects (
                 hash TEXT PRIMARY KEY, content TEXT NOT NULL)""",
             """CREATE TABLE IF NOT EXISTS events (
@@ -111,30 +115,8 @@ class PostgresPersistentWorkspace(PersistentWorkspace):
             "CREATE INDEX IF NOT EXISTS idx_events_timestamp ON events(timestamp)",
             "CREATE INDEX IF NOT EXISTS idx_events_agent ON events(agent_id)",
             "CREATE INDEX IF NOT EXISTS idx_events_action ON events(action)",
-        ]
+        )
         with self._lock:
-            for statement in statements:
+            for statement in schema:
                 self._conn.execute(statement)
-            # Upgrade databases created by the first PostgreSQL schema revision.
-            self._conn.execute(
-                "ALTER TABLE leases ADD COLUMN IF NOT EXISTS fencing_token BIGINT NOT NULL DEFAULT 0"
-            )
             self._conn.commit()
-
-    def _save_lease(self, lease: Lease):
-        self._conn.execute(
-            """INSERT INTO leases
-               (resource_key, agent_id, expires_at, acquired_at, fencing_token)
-               VALUES (?, ?, ?, ?, ?)
-               ON CONFLICT(resource_key) DO UPDATE SET
-                 agent_id=EXCLUDED.agent_id, expires_at=EXCLUDED.expires_at,
-                 acquired_at=EXCLUDED.acquired_at, fencing_token=EXCLUDED.fencing_token""",
-            (lease.resource_key, lease.agent_id, lease.expires_at,
-             lease.acquired_at, lease.fencing_token),
-        )
-        self._conn.execute(
-            """INSERT INTO lease_counters (resource_key, fencing_token) VALUES (?, ?)
-               ON CONFLICT(resource_key) DO UPDATE
-               SET fencing_token = GREATEST(lease_counters.fencing_token, EXCLUDED.fencing_token)""",
-            (lease.resource_key, lease.fencing_token),
-        )
