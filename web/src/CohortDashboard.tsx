@@ -185,7 +185,7 @@ export default function CohortDashboard() {
             <p className="empty-note">Snapshots are derived from the runtime's content-addressed history.</p>
           </div></details>
           <details><summary>Conflict resolution</summary><div className="under-body">
-            {conflicts.length ? conflicts.map((branch) => <div className="snapshot-entry" key={branch.id}><b>{branch.name}</b><small>{branch.conflicting_keys.join(", ")}</small><button className="small-button" onClick={() => setResolveBranch(branch)}>Resolve conflict</button></div>) : <p className="empty-note">No unresolved branch conflicts.</p>}
+            {conflicts.length ? conflicts.map((branch) => <div className="snapshot-entry" key={branch.id}><b>{branch.name}</b><small>{branch.conflicting_keys.join(", ")}</small><button className="small-button" onClick={() => void openResolve(branch)}>Resolve conflict</button></div>) : <p className="empty-note">No unresolved branch conflicts.</p>}
             <p className="empty-note">A resolver is a policy choice, not proof that the resulting content is correct.</p>
           </div></details>
           <details><summary>Leases</summary><div className="under-body">
