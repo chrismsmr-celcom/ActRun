@@ -1,5 +1,5 @@
-import { FormEvent, useEffect, useState } from "react";
-import type { CSSProperties, ReactNode } from "react";
+import { useEffect, useState } from "react";
+import type { CSSProperties, FormEvent, ReactNode } from "react";
 import type { Session } from "@supabase/supabase-js";
 import CohortDashboard from "./CohortDashboard";
 import { authConfigured, authEnvironmentPresent, supabase } from "./auth";
@@ -84,5 +84,5 @@ function AuthScreen({ message, children }: { message: string; children?: ReactNo
 }
 
 const inputStyle: CSSProperties = { padding: "12px 13px", border: "1px solid #d0d5dd", borderRadius: 8, fontSize: 14 };
-const buttonStyle: React.CSSProperties = { padding: "12px 14px", border: 0, borderRadius: 8, background: "#161b26", color: "#fff", fontWeight: 600, cursor: "pointer" };
-const signOutStyle: React.CSSProperties = { position: "fixed", top: 12, right: 16, zIndex: 1000, padding: "8px 12px", border: "1px solid #d0d5dd", borderRadius: 8, background: "#fff", cursor: "pointer" };
+const buttonStyle: CSSProperties = { padding: "12px 14px", border: 0, borderRadius: 8, background: "#161b26", color: "#fff", fontWeight: 600, cursor: "pointer" };
+const signOutStyle: CSSProperties = { position: "fixed", top: 12, right: 16, zIndex: 1000, padding: "8px 12px", border: "1px solid #d0d5dd", borderRadius: 8, background: "#fff", cursor: "pointer" };
