@@ -80,6 +80,8 @@ _restore_api_branches()
 
 app = FastAPI(title="Cerbere Cohort API", version="0.1.0")
 origins = [x.strip() for x in os.getenv("COHORT_CORS_ORIGINS", "*").split(",") if x.strip()]
+if DATABASE_URL and (not os.getenv("COHORT_CORS_ORIGINS") or "*" in origins):
+    raise RuntimeError("Set COHORT_CORS_ORIGINS to explicit frontend origins in production")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
