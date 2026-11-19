@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Activity, ChevronDown, Command, Database, GitBranch, LayoutDashboard, Moon, PanelLeftClose, PanelLeftOpen, RefreshCw, ScrollText, Settings2, Sun } from "lucide-react";
-import cohortLogo from "../../docs/cohort logo.png";
+import cohortLogo from "./cohortLogo";
 import "./cohort-dashboard.css";
 
 type Tab = "Overview" | "Branches" | "State" | "Event log" | "Settings";
