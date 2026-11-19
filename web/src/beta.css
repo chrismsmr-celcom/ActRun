@@ -1,0 +1,52 @@
+/* Beta polish — loaded after cohort-dashboard.css. Readability, auth screen, small additions. */
+
+/* Legibility: the base UI used 9–10px text almost everywhere. */
+.data-table td, .data-table td strong { font-size: 12px; }
+.data-table th { font-size: 10px; }
+.data-table code, .value-preview { font-size: 11px; }
+.surface-heading h2 { font-size: 14px; }
+.surface-heading p, .page-heading p, .modal-description, .empty-state p, .health-copy small, .setting-line, .setting-line code { font-size: 12px; }
+.empty-state strong, .health-copy strong, .attention-detail strong { font-size: 13px; }
+.attention-detail small, .chart-footer, .status-tag, .text-action, .card-footer-link, .updated-label, .connection-pill { font-size: 11px; }
+.metric-card > span, .form-label, .table-toolbar, .runtime-status-card p, .health-meta { font-size: 12px; }
+.nav-link { font-size: 13px; padding: 10px 11px; }
+.nav-link small { font-size: 11px; }
+.button-primary, .button-secondary { height: 36px; font-size: 12px; padding: 0 14px; }
+.form-label input, .form-label select, .form-label textarea, .search-control input { font-size: 13px; }
+.search-control input { font-size: 12px; }
+.toast { font-size: 12px; }
+.three-way pre { font-size: 11px; }
+button:disabled { opacity: .5; cursor: not-allowed; }
+button { cursor: pointer; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+/* Brand */
+.beta-tag { margin-left: 7px; padding: 2px 6px; border-radius: 4px; background: var(--accent-soft); color: var(--accent); font: 600 9px 'IBM Plex Mono', monospace; letter-spacing: .8px; vertical-align: middle; }
+.row-actions { display: inline-flex; gap: 14px; align-items: center; }
+
+/* Sidebar footer */
+.profile-control { cursor: default; }
+.profile-control > span { min-width: 0; }
+.profile-control strong { display: block; max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 12px; }
+.profile-control small { font-size: 11px; }
+.feedback-link { display: flex; align-items: center; gap: 8px; padding: 9px 10px; margin-bottom: 10px; border-radius: 5px; color: var(--muted); font-size: 12px; font-weight: 500; text-decoration: none; }
+.feedback-link:hover { background: var(--surface); color: var(--ink); }
+.runtime-status-card button { font-size: 11px; }
+
+/* Auth + error screens */
+.auth-page { min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 18px; padding: 24px; background: var(--bg); color: var(--ink); }
+.auth-card { width: 100%; max-width: 400px; display: grid; gap: 22px; padding: 32px; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; box-shadow: 0 12px 40px #17181b12; }
+.auth-brand { display: flex; align-items: center; gap: 10px; }
+.auth-brand strong { font-size: 20px; letter-spacing: -.6px; }
+.auth-card h1 { margin: 0 0 6px; font-size: 22px; line-height: 1.25; font-weight: 600; letter-spacing: -.4px; }
+.auth-card p { margin: 0; color: var(--muted); font-size: 13px; line-height: 1.55; }
+.auth-form { display: grid; gap: 14px; }
+.auth-form .form-label { margin: 0; }
+.auth-button { width: 100%; height: 40px; font-size: 13px; }
+.auth-divider { display: flex; align-items: center; gap: 12px; color: var(--faint); font-size: 11px; }
+.auth-divider::before, .auth-divider::after { content: ""; flex: 1; height: 1px; background: var(--line); }
+.auth-message { padding: 10px 12px; border-radius: 6px; border: 1px solid var(--line); background: var(--panel-alt); }
+.auth-message.error { border-color: var(--red); background: var(--red-soft); color: var(--red) !important; }
+.auth-footer { color: var(--faint); font-size: 11px; }
+
+@media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
