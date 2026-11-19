@@ -11,7 +11,7 @@ def test_insert_or_ignore_uses_postgres_conflict_clause():
         "INSERT OR IGNORE INTO events (event_id, action) VALUES (?, ?)"
     )
     assert sql == (
-        "INSERT INTO events (event_id, action) VALUES (%s, %s) "
+        "INSERT INTO cohort_events (event_id, action) VALUES (%s, %s) "
         "ON CONFLICT DO NOTHING"
     )
 
@@ -29,7 +29,7 @@ def test_insert_or_replace_becomes_upsert():
 
 def test_event_order_uses_persistent_sequence():
     sql = _Connection._translate("SELECT * FROM events ORDER BY rowid")
-    assert sql == "SELECT * FROM events ORDER BY seq"
+    assert sql == "SELECT * FROM cohort_events ORDER BY seq"
 
 
 def test_lease_counter_uses_greatest():
@@ -38,4 +38,4 @@ def test_lease_counter_uses_greatest():
         "ON CONFLICT(resource_key) DO UPDATE SET "
         "fencing_token = MAX(fencing_token, excluded.fencing_token)"
     )
-    assert "GREATEST(lease_counters.fencing_token, EXCLUDED.fencing_token)" in sql
+    assert "GREATEST(cohort_lease_counters.fencing_token, EXCLUDED.fencing_token)" in sql
