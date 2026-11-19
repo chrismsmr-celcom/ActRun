@@ -45,11 +45,11 @@ Set these environment variables:
 | `COHORT_ORGANIZATION_ID` | UUID of the one enabled organization |
 | `COHORT_CORS_ORIGINS` | Exact Vercel frontend origin, e.g. `https://your-app.vercel.app` |
 | `COHORT_ENV` | `production` |
-| `COHORT_REQUIRE_LEASES` | `true` if writes must hold a lease |
+| `COHORT_REQUIRE_LEASES` | `true` if writes must hold a lease |\n| `COHORT_TELEMETRY_COLLECTOR_ENABLED` | `true` only if accepting opt-in self-hosted installation pings |
 
 Do not set `COHORT_CORS_ORIGINS=*` in hosted PostgreSQL mode. Render provides `PORT`; do not hard-code it.
 
-After deployment, check `/api/health`. It should report PostgreSQL persistence and Supabase authentication. A successful health check does not prove membership queries or all database operations work; inspect logs and run an authenticated end-to-end test.
+To receive opt-in Community installation pings, set `COHORT_TELEMETRY_COLLECTOR_ENABLED=true`. This creates the aggregate telemetry table at API startup. Keep it unset to disable collection. Authenticated workspace members can then read aggregate counts from `/api/traction`.\n\nAfter deployment, check `/api/health`. It should report PostgreSQL persistence and Supabase authentication. A successful health check does not prove membership queries or all database operations work; inspect logs and run an authenticated end-to-end test.
 
 ## 3. Deploy the dashboard on Vercel
 
