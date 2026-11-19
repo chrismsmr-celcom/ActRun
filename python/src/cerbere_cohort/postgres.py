@@ -16,6 +16,11 @@ class _Row(dict):
 
 
 def _row_factory(cursor):
+    # PostgreSQL commands such as CREATE TABLE and INSERT may return no
+    # result columns. Psycopg still asks for a row factory while processing
+    # the command, so provide a harmless tuple factory in that case.
+    if cursor.description is None:
+        return lambda values: tuple(values)
     names = [column.name for column in cursor.description]
     def make_row(values):
         return _Row(zip(names, values))
