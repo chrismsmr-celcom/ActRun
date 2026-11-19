@@ -55,7 +55,8 @@ export default function CohortDashboard() {
   const [replayIndex, setReplayIndex] = useState(0);
   const [resolveBranch, setResolveBranch] = useState<Branch | null>(null);
   const [strategy, setStrategy] = useState("PreferHead");
-  const [rationale, setRationale] = useState("");\n  const [agentPriority, setAgentPriority] = useState("");
+  const [rationale, setRationale] = useState("");
+  const [agentPriority, setAgentPriority] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
   const [agentId, setAgentId] = useState("agent-new");
   const [branchName, setBranchName] = useState("");
