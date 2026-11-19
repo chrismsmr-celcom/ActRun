@@ -52,9 +52,7 @@ workspace = (
     if DATABASE_URL.startswith(("postgres://", "postgresql://"))
     else PersistentWorkspace(DB_PATH, require_leases=REQUIRE_LEASES)
 )
-workspace._workspace._require_leases = (
-    os.getenv("COHORT_REQUIRE_LEASES", "false").lower() == "true"
-)
+workspace._workspace._require_leases = REQUIRE_LEASES
 _lock = threading.RLock()
 _branches: dict[str, dict[str, Any]] = {}
 
