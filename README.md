@@ -244,25 +244,32 @@ Current route groups include:
 | `GET/POST/DELETE /api/leases` | Inspect, acquire, and release leases |
 | `GET /api/events` | Read coordination events |
 | `GET /api/settings` | Read deployment settings |
+| `POST /api/telemetry/install` | Register an opt-in self-hosted installation heartbeat (only when collection is enabled) |
+| `GET /api/traction` | Read aggregate opt-in installation counts (authenticated; only when collection is enabled) |
 
 Authenticated routes require a Supabase access token and enforce member or writer permissions. The health endpoint is public. In hosted PostgreSQL mode, the service is configured for one organization per deployment; this is **not** general multi-tenant isolation. The current API process is not a horizontally scalable, multi-instance coordination service.
 
 The exact request and response schemas are defined in the FastAPI implementation and should be treated as authoritative. Interactive API documentation is available from FastAPI at `/docs` when the service is running.
 
-## MCP server (experimental)
+## MCP integration (experimental)
 
-An early stdio MCP server is located in `integrations/mcp-server`. It exposes tools for reading workspace state, creating branches, writing to a branch, committing, acquiring and releasing leases, and reading events.
+The MCP server is located in `integrations/mcp-server`. It exposes tools for reading workspace state, creating branches, reading and writing branch values, deleting keys, committing branches, acquiring and releasing leases, and reading events.
 
-The server package declares the `cerbere-cohort-mcp` entry point. Install and run it from the integration directory after installing the local Python package:
+The server supports **Streamable HTTP by default for local development** and stdio. When `DATABASE_URL` is set, it rejects Streamable HTTP and requires stdio because authenticated remote MCP transport is not implemented. Do not expose the local HTTP transport publicly.
+
+Install and run it from the integration directory after installing the local Python package:
 
 ```bash
 python -m pip install -e "./python"
 cd integrations/mcp-server
 python -m pip install -e .
+# Local development (Streamable HTTP on 127.0.0.1:8765 by default)
 cerbere-cohort-mcp
+# Or use stdio for a local MCP client:
+cerbere-cohort-mcp --transport stdio
 ```
 
-The MCP server persists its workspace through SQLite or PostgreSQL and stores its own working branches in an `mcp_branches` table. **Those branches are separate from the REST API's `api_branches`; a branch created through REST is not visible to MCP and vice versa.** When `DATABASE_URL` is set, remote Streamable HTTP is deliberately rejected because authenticated remote MCP transport is not implemented. Use stdio for local MCP clients only. Do not expose this server publicly or treat it as a multi-user MCP service.
+The MCP server persists its workspace through SQLite or PostgreSQL and stores its own working branches in an `mcp_branches` table. **Those branches are separate from the REST API's `api_branches`; a branch created through REST is not visible to MCP and vice versa.** With production `DATABASE_URL`, use stdio with a local MCP client; authenticated remote MCP transport is not available. This is not a multi-user MCP service.
 
 ## Architecture
 
