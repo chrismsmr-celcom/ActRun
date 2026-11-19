@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Activity, BarChart3, Command, Database, GitBranch, LayoutDashboard, LogOut, MessageSquare, Moon, PanelLeftClose, PanelLeftOpen, RefreshCw, ScrollText, Settings2, Sun } from "lucide-react";
-import cohortLogo from "./cohortLogo";\nimport TractionPanel from "./TractionPanel";
+import cohortLogo from "./cohortLogo";
+import TractionPanel from "./TractionPanel";
 import "./cohort-dashboard.css";
 import "./beta.css";
 import { organizationId, supabase } from "./auth";
@@ -320,7 +321,9 @@ export default function CohortDashboard({ userEmail, onSignOut }: { userEmail?: 
           <section className="surface-card"><div className="data-table-wrap"><table className="data-table"><thead><tr><th>EVENT</th><th>AGENT</th><th>EVENT ID</th><th>RECORDED AT</th><th/></tr></thead><tbody>{events.filter(e=>(e.action+" "+e.agent_id+" "+e.event_id).toLowerCase().includes(filter.toLowerCase())).map(event=><tr key={event.event_id}><td><span className="event-name"><i className={/conflict|abort|reject/.test(event.action)?"event-dot danger":/commit|resolve/.test(event.action)?"event-dot success":"event-dot"}/>{event.action}</span></td><td>{event.agent_id}</td><td><code>{short(event.event_id)}</code></td><td>{new Date(event.timestamp).toLocaleString()}</td><td><button className="text-action" onClick={()=>{setReplayIndex(events.findIndex(e=>e.event_id===event.event_id));setSidebar(true)}}>Inspect →</button></td></tr>)}</tbody></table></div></section>
         </>}
 
-        {tab==="Traction"&&<TractionPanel/>}\n\n        {tab==="Settings"&&<>
+        {tab==="Traction"&&<TractionPanel/>}
+
+        {tab==="Settings"&&<>
           <div className="page-heading"><div><div className="eyebrow">WORKSPACE / CONFIGURATION</div><h1>Runtime settings</h1><p>Inspect the configuration and operational boundaries of this Cohort instance.</p></div></div>
           <div className="settings-layout"><section className="surface-card"><div className="surface-heading"><div><h2>Storage and coordination</h2><p>Current runtime configuration</p></div></div><Setting label="Storage backend" value={settings?.persistence||"—"}/><Setting label="Database path" value={settings?.database_path||"—"}/><Setting label="Lease enforcement" value={settings?(settings.require_leases?"Required for writes":"Advisory"):"—"}/></section><section className="surface-card"><div className="surface-heading"><div><h2>Runtime capabilities</h2><p>Features reported by the API adapter</p></div></div><Setting label="Multi-process coordination" value={settings?(settings.multi_process?"Enabled":"Single process"):"—"}/><Setting label="Authentication" value={settings?(settings.authentication==="supabase"?"Supabase JWT + membership checks":"Not configured"):"—"}/><div className="security-notice"><strong>Deployment note</strong><p>This deployment is restricted to one configured organization. Multi-organization isolation and authenticated remote MCP are not enabled yet.</p></div></section></div>
         </>}
