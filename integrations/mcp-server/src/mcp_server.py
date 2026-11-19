@@ -330,6 +330,11 @@ def main() -> None:
     parser.add_argument("--port", type=int, default=int(os.getenv("COHORT_MCP_PORT", "8765")))
     args = parser.parse_args()
 
+    if os.getenv("DATABASE_URL") and args.transport != "stdio":
+        raise RuntimeError(
+            "Authenticated remote MCP transport is not enabled yet. "
+            "Use stdio; do not expose the shared production workspace over unauthenticated HTTP."
+        )
     service = CohortService(args.db)
     mcp = create_server(service, host=args.host, port=args.port)
     if args.transport == "stdio":
