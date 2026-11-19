@@ -1,8 +1,8 @@
-"""Small single-process HTTP adapter for the Cohort Python runtime.
+"""HTTP adapter for the Cohort runtime.
 
-This adapter exposes the existing Workspace/PersistentWorkspace primitives.
-It is intentionally documented as single-process: branch handles and the
-branch registry are process-local until the runtime grows durable branch IDs.
+Workspace state and branch working copies are persisted in the configured
+database. Until organization-scoped access and cross-instance branch locking
+are implemented, deploy this API as a single instance.
 """
 from __future__ import annotations
 
