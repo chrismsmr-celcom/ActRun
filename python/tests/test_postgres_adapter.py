@@ -1,4 +1,4 @@
-from cerbere_cohort.postgres import _Connection
+from cerbere_cohort.postgres import _Connection, _row_factory
 
 
 def test_begin_immediate_becomes_transaction():
@@ -23,3 +23,11 @@ def test_insert_or_replace_is_translated_to_postgres_upsert():
     translated = _Connection._translate(sql)
     assert "ON CONFLICT (resource_key) DO UPDATE SET" in translated
     assert "agent_id=EXCLUDED.agent_id" in translated
+
+
+def test_row_factory_handles_commands_without_result_columns():
+    class CommandCursor:
+        description = None
+
+    make_row = _row_factory(CommandCursor())
+    assert make_row(()) == ()
