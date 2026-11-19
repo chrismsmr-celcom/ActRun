@@ -274,6 +274,7 @@ def resolve_branch(branch_id: str, body: ResolveRequest):
             snapshot = workspace.commit(item["agent_id"], item["branch"], resolver=AuditedResolver())
             item["status"] = "merged"
             item["conflicting_keys"] = []
+            _save_api_branch(branch_id, item)
             return {"ok": True, "head": snapshot.version_id, "branch": _branch_summary(branch_id, item)}
         except ConflictError as exc:
             item["conflicting_keys"] = list(exc.conflicting_keys)
@@ -347,10 +348,10 @@ def release_lease(key: str, agent_id: str):
 def get_settings():
     return {
         "require_leases": workspace._workspace._require_leases,
-        "persistence": "sqlite",
-        "database_path": "managed" if DATABASE_URL else str(DB_PATH),
+        "persistence": "postgresql" if DATABASE_URL.startswith(("postgres://", "postgresql://")) else "sqlite",
+        "database_path": "managed" if DATABASE_URL.startswith(("postgres://", "postgresql://")) else str(DB_PATH),
         "multi_process": DATABASE_URL.startswith(("postgres://", "postgresql://")),
-        "authentication": False,
+        "authentication": "not_configured",
     }
 
 
