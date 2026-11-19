@@ -13,10 +13,11 @@ import uuid
 from pathlib import Path
 from typing import Any, Literal
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 from cerbere_cohort.workspace import Branch
+from cerbere_cohort.auth import require_workspace_member, require_workspace_writer
 
 from cerbere_cohort import (
     ConflictError,
@@ -33,6 +34,8 @@ DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 DB_PATH = Path(os.getenv("COHORT_DB_PATH", "./data/cohort.db"))
 if DATABASE_URL and not DATABASE_URL.startswith(("postgres://", "postgresql://")):
     raise RuntimeError("DATABASE_URL must be a PostgreSQL connection URL")
+if DATABASE_URL and (not os.getenv("SUPABASE_URL") or not os.getenv("COHORT_ORGANIZATION_ID")):
+    raise RuntimeError("SUPABASE_URL and COHORT_ORGANIZATION_ID are required in production")
 if not DATABASE_URL:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 workspace = (
@@ -77,6 +80,8 @@ _restore_api_branches()
 
 app = FastAPI(title="Cerbere Cohort API", version="0.1.0")
 origins = [x.strip() for x in os.getenv("COHORT_CORS_ORIGINS", "*").split(",") if x.strip()]
+if DATABASE_URL and (not os.getenv("COHORT_CORS_ORIGINS") or "*" in origins):
+    raise RuntimeError("Set COHORT_CORS_ORIGINS to explicit frontend origins in production")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=origins,
@@ -134,10 +139,11 @@ def health():
         "runtime": "python",
         "persistence": "postgresql" if DATABASE_URL.startswith(("postgres://", "postgresql://")) else "sqlite",
         "branch_registry": "database",
+        "authentication": "supabase" if DATABASE_URL else "development-bypass",
     }
 
 
-@app.get("/api/overview")
+@app.get("/api/overview", dependencies=[Depends(require_workspace_member)])
 def overview():
     events = workspace.get_events()
     leases = workspace._workspace._lease_manager.get_active_leases()
@@ -156,13 +162,13 @@ def overview():
     }
 
 
-@app.get("/api/branches")
+@app.get("/api/branches", dependencies=[Depends(require_workspace_member)])
 def list_branches():
     with _lock:
         return {"items": [_branch_summary(k, v) for k, v in _branches.items()]}
 
 
-@app.post("/api/branches", status_code=201)
+@app.post("/api/branches", status_code=201, dependencies=[Depends(require_workspace_writer)])
 def create_branch(body: BranchCreate):
     branch_id = str(uuid.uuid4())
     try:
@@ -181,7 +187,7 @@ def create_branch(body: BranchCreate):
     return _branch_summary(branch_id, _branches[branch_id])
 
 
-@app.put("/api/branches/{branch_id}/state")
+@app.put("/api/branches/{branch_id}/state", dependencies=[Depends(require_workspace_writer)])
 def write_branch(branch_id: str, body: BranchWrite):
     with _lock:
         item = _branches.get(branch_id)
@@ -195,7 +201,7 @@ def write_branch(branch_id: str, body: BranchWrite):
     return {"ok": True, "branch_id": branch_id, "key": body.key}
 
 
-@app.post("/api/branches/{branch_id}/commit")
+@app.post("/api/branches/{branch_id}/commit", dependencies=[Depends(require_workspace_writer)])
 def commit_branch(branch_id: str):
     with _lock:
         item = _branches.get(branch_id)
@@ -220,7 +226,7 @@ def commit_branch(branch_id: str):
             }
 
 
-@app.get("/api/branches/{branch_id}/conflict")
+@app.get("/api/branches/{branch_id}/conflict", dependencies=[Depends(require_workspace_member)])
 def get_branch_conflict(branch_id: str):
     with _lock:
         item = _branches.get(branch_id)
@@ -253,7 +259,7 @@ def get_branch_conflict(branch_id: str):
         }
 
 
-@app.post("/api/branches/{branch_id}/resolve")
+@app.post("/api/branches/{branch_id}/resolve", dependencies=[Depends(require_workspace_writer)])
 def resolve_branch(branch_id: str, body: ResolveRequest):
     with _lock:
         item = _branches.get(branch_id)
@@ -293,7 +299,7 @@ def resolve_branch(branch_id: str, body: ResolveRequest):
             raise HTTPException(409, detail={"message": str(exc), "conflicting_keys": list(exc.conflicting_keys)}) from exc
 
 
-@app.get("/api/state")
+@app.get("/api/state", dependencies=[Depends(require_workspace_member)])
 def get_state():
     head = workspace.head
     return {
@@ -306,7 +312,7 @@ def get_state():
     }
 
 
-@app.get("/api/events")
+@app.get("/api/events", dependencies=[Depends(require_workspace_member)])
 def get_events(limit: int = 100):
     if limit < 1 or limit > 1000:
         raise HTTPException(422, "limit must be between 1 and 1000")
@@ -314,7 +320,7 @@ def get_events(limit: int = 100):
     return {"items": [_event_dict(e) for e in events[-limit:]][::-1]}
 
 
-@app.get("/api/leases")
+@app.get("/api/leases", dependencies=[Depends(require_workspace_member)])
 def get_leases():
     leases = workspace._workspace._lease_manager.get_active_leases()
     return {
@@ -331,7 +337,7 @@ def get_leases():
     }
 
 
-@app.post("/api/leases", status_code=201)
+@app.post("/api/leases", status_code=201, dependencies=[Depends(require_workspace_writer)])
 def acquire_lease(body: LeaseRequest):
     try:
         lease = workspace.acquire_lease(body.agent_id, body.key, body.duration_seconds)
@@ -346,7 +352,7 @@ def acquire_lease(body: LeaseRequest):
     }
 
 
-@app.delete("/api/leases/{key:path}")
+@app.delete("/api/leases/{key:path}", dependencies=[Depends(require_workspace_writer)])
 def release_lease(key: str, agent_id: str):
     try:
         workspace.release_lease(agent_id, key)
@@ -355,7 +361,7 @@ def release_lease(key: str, agent_id: str):
     return {"ok": True}
 
 
-@app.get("/api/settings")
+@app.get("/api/settings", dependencies=[Depends(require_workspace_member)])
 def get_settings():
     return {
         "require_leases": workspace._workspace._require_leases,
@@ -363,7 +369,7 @@ def get_settings():
         "database_path": "managed" if DATABASE_URL.startswith(("postgres://", "postgresql://")) else str(DB_PATH),
         "multi_process": False,
         "database_transactions": DATABASE_URL.startswith(("postgres://", "postgresql://")),
-        "authentication": "not_configured",
+        "authentication": "supabase" if DATABASE_URL else "development-bypass",
     }
 
 

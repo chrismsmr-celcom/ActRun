@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Activity, ChevronDown, Command, Database, GitBranch, LayoutDashboard, Moon, PanelLeftClose, PanelLeftOpen, RefreshCw, ScrollText, Settings2, Sun } from "lucide-react";
 import cohortLogo from "./cohortLogo";
 import "./cohort-dashboard.css";
+import { organizationId, supabase } from "./auth";
 
 type Tab = "Overview" | "Branches" | "State" | "Event log" | "Settings";
 type EventItem = { event_id: string; timestamp: string; agent_id: string; action: string; payload: Record<string, unknown>; schema_version: string };
@@ -9,14 +10,23 @@ type Branch = { id: string; name: string; agent_id: string; base_version: string
 type StateItem = { key: string; value_hash: string; value: unknown };
 type Lease = { key: string; agent_id: string; expires_at: number; acquired_at: number; fencing_token: number };
 type Overview = { head: string; key_count: number; snapshot_count: number; event_count: number; active_lease_count: number; commit_count: number; conflict_count: number; branches: number; sample_data: boolean };
-type Settings = { require_leases: boolean; persistence: string; database_path: string; multi_process: boolean; authentication: boolean };
+type Settings = { require_leases: boolean; persistence: string; database_path: string; multi_process: boolean; authentication: string };
 type ConflictDetail = { key: string; base: unknown; head: unknown; branch: unknown; base_present: boolean; head_present: boolean; branch_present: boolean };
 
 const API = (import.meta as any).env?.VITE_API_BASE_URL || (import.meta as any).env?.VITE_API_URL || "";
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "X-Organization-ID": organizationId,
+    ...((init?.headers || {}) as Record<string, string>),
+  };
+  if (supabase) {
+    const { data } = await supabase.auth.getSession();
+    if (data.session?.access_token) headers.Authorization = `Bearer ${data.session.access_token}`;
+  }
   const response = await fetch(`${API}/api${path}`, {
     ...init,
-    headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
+    headers,
   });
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
@@ -266,7 +276,7 @@ export default function CohortDashboard() {
 
         {tab==="Settings"&&<>
           <div className="page-heading"><div><div className="eyebrow">WORKSPACE / CONFIGURATION</div><h1>Runtime settings</h1><p>Inspect the configuration and operational boundaries of this Cohort instance.</p></div></div>
-          <div className="settings-layout"><section className="surface-card"><div className="surface-heading"><div><h2>Storage and coordination</h2><p>Current runtime configuration</p></div></div><Setting label="Storage backend" value={settings?.persistence||"—"}/><Setting label="Database path" value={settings?.database_path||"—"}/><Setting label="Lease enforcement" value={settings?(settings.require_leases?"Required for writes":"Advisory"):"—"}/></section><section className="surface-card"><div className="surface-heading"><div><h2>Runtime capabilities</h2><p>Features reported by the API adapter</p></div></div><Setting label="Multi-process coordination" value={settings?(settings.multi_process?"Enabled":"Single process"):"—"}/><Setting label="Authentication" value={settings?(settings.authentication?"Enabled":"Not configured"):"—"}/><div className="security-notice"><strong>Deployment note</strong><p>The current adapter is intended for local development. Do not expose it publicly without authentication, authorization, tenant isolation and a durable branch registry.</p></div></section></div>
+          <div className="settings-layout"><section className="surface-card"><div className="surface-heading"><div><h2>Storage and coordination</h2><p>Current runtime configuration</p></div></div><Setting label="Storage backend" value={settings?.persistence||"—"}/><Setting label="Database path" value={settings?.database_path||"—"}/><Setting label="Lease enforcement" value={settings?(settings.require_leases?"Required for writes":"Advisory"):"—"}/></section><section className="surface-card"><div className="surface-heading"><div><h2>Runtime capabilities</h2><p>Features reported by the API adapter</p></div></div><Setting label="Multi-process coordination" value={settings?(settings.multi_process?"Enabled":"Single process"):"—"}/><Setting label="Authentication" value={settings?(settings.authentication==="supabase"?"Supabase JWT + membership checks":"Not configured"):"—"}/><div className="security-notice"><strong>Deployment note</strong><p>This deployment is restricted to one configured organization. Multi-organization isolation and authenticated remote MCP are not enabled yet.</p></div></section></div>
         </>}
       </main>
     </div>
