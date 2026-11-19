@@ -6,6 +6,7 @@ branch registry are process-local until the runtime grows durable branch IDs.
 """
 from __future__ import annotations
 
+import json
 import os
 import threading
 import uuid
@@ -15,6 +16,7 @@ from typing import Any, Literal
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+from cerbere_cohort.workspace import Branch
 
 from cerbere_cohort import (
     ConflictError,
@@ -41,6 +43,26 @@ workspace._workspace._require_leases = (
 )
 _lock = threading.RLock()
 _branches: dict[str, dict[str, Any]] = {}
+
+workspace._conn.execute("CREATE TABLE IF NOT EXISTS api_branches (branch_id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, branch_name TEXT NOT NULL, base_version TEXT NOT NULL, current_data_json TEXT NOT NULL, intents_json TEXT NOT NULL, status TEXT NOT NULL, conflicting_keys_json TEXT NOT NULL, created_at TEXT NOT NULL)")
+workspace._conn.commit()
+
+def _save_api_branch(branch_id: str, item: dict[str, Any]) -> None:
+    b = item['branch']
+    workspace._conn.execute("INSERT INTO api_branches (branch_id, agent_id, branch_name, base_version, current_data_json, intents_json, status, conflicting_keys_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(branch_id) DO UPDATE SET current_data_json=excluded.current_data_json, intents_json=excluded.intents_json, status=excluded.status, conflicting_keys_json=excluded.conflicting_keys_json", (branch_id, item['agent_id'], b.name, b.base_version, json.dumps(b.current_data, ensure_ascii=False), json.dumps(b.intents, ensure_ascii=False), item['status'], json.dumps(item.get('conflicting_keys', [])), item['created_at']))
+    workspace._conn.commit()
+
+def _restore_api_branches() -> None:
+    for row in workspace._conn.execute('SELECT * FROM api_branches').fetchall():
+        base = workspace._workspace._snapshots.get(row['base_version'])
+        if base is None:
+            continue
+        b = Branch(row['branch_name'], base, workspace._workspace._lease_manager, row['agent_id'], workspace._workspace._require_leases)
+        b.current_data = json.loads(row['current_data_json'])
+        b.intents = json.loads(row['intents_json'])
+        _branches[row['branch_id']] = {'branch': b, 'agent_id': row['agent_id'], 'status': row['status'], 'conflicting_keys': json.loads(row['conflicting_keys_json']), 'created_at': row['created_at']}
+
+_restore_api_branches()
 
 app = FastAPI(title="Cerbere Cohort API", version="0.1.0")
 origins = [x.strip() for x in os.getenv("COHORT_CORS_ORIGINS", "*").split(",") if x.strip()]
