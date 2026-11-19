@@ -65,7 +65,7 @@ export default function App() {
   }
   return (
     <>
-      <button onClick={() => void supabase.auth.signOut()} style={signOutStyle}>Sign out</button>
+      <button onClick={() => void supabase?.auth.signOut()} style={signOutStyle}>Sign out</button>
       <CohortDashboard />
     </>
   );
