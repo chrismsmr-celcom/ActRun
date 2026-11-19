@@ -35,33 +35,51 @@ def _fake_psycopg(counter):
     return types.SimpleNamespace(connect=connect)
 
 
+class _MembershipCursor:
+    def fetchone(self):
+        return ("member",)
+
+
+class _MembershipDb:
+    def __init__(self):
+        self.calls = 0
+
+    def execute(self, sql, params=()):
+        self.calls += 1
+        assert "public.cohort_memberships" in sql
+        assert params == (ORG, USER)
+        return _MembershipCursor()
+
+
 def test_membership_lookup_is_cached(monkeypatch):
-    counter = {"n": 0}
-    monkeypatch.setitem(sys.modules, "psycopg", _fake_psycopg(counter))
+    db = _MembershipDb()
     monkeypatch.setenv("DATABASE_URL", "postgresql://example")
     monkeypatch.setenv("COHORT_ORGANIZATION_ID", ORG)
     monkeypatch.setattr(auth, "_decode_access_token", lambda token: {"sub": USER, "email": "a@b.co"})
-    auth._membership_cache.clear()
+    monkeypatch.setattr(auth, "_membership_cache", {})
+    monkeypatch.setattr(auth, "_membership_db", db)
+
     for _ in range(3):
         ctx = auth.require_workspace_member(authorization="Bearer t", x_organization_id=ORG)
+
     assert ctx["role"] == "member" and ctx["user_id"] == USER
-    assert counter["n"] == 1, "membership must be looked up once within the TTL"
-    auth._membership_cache.clear()
+    assert db.calls == 1, "membership must be looked up once within the TTL"
 
 
 def test_membership_cache_expires(monkeypatch):
-    counter = {"n": 0}
-    monkeypatch.setitem(sys.modules, "psycopg", _fake_psycopg(counter))
+    db = _MembershipDb()
     monkeypatch.setenv("DATABASE_URL", "postgresql://example")
     monkeypatch.setenv("COHORT_ORGANIZATION_ID", ORG)
     monkeypatch.setattr(auth, "_decode_access_token", lambda token: {"sub": USER})
-    auth._membership_cache.clear()
+    monkeypatch.setattr(auth, "_membership_cache", {})
+    monkeypatch.setattr(auth, "_membership_db", db)
+
     auth.require_workspace_member(authorization="Bearer t", x_organization_id=ORG)
     key = (ORG, USER)
     auth._membership_cache[key] = (0.0, "member")  # already expired
     auth.require_workspace_member(authorization="Bearer t", x_organization_id=ORG)
-    assert counter["n"] == 2
-    auth._membership_cache.clear()
+
+    assert db.calls == 2
 
 
 class _FakeDb:
