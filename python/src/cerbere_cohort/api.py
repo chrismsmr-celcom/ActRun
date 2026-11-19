@@ -34,6 +34,8 @@ DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 DB_PATH = Path(os.getenv("COHORT_DB_PATH", "./data/cohort.db"))
 if DATABASE_URL and not DATABASE_URL.startswith(("postgres://", "postgresql://")):
     raise RuntimeError("DATABASE_URL must be a PostgreSQL connection URL")
+if DATABASE_URL and (not os.getenv("SUPABASE_URL") or not os.getenv("COHORT_ORGANIZATION_ID")):
+    raise RuntimeError("SUPABASE_URL and COHORT_ORGANIZATION_ID are required in production")
 if not DATABASE_URL:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 workspace = (
@@ -365,7 +367,7 @@ def get_settings():
         "database_path": "managed" if DATABASE_URL.startswith(("postgres://", "postgresql://")) else str(DB_PATH),
         "multi_process": False,
         "database_transactions": DATABASE_URL.startswith(("postgres://", "postgresql://")),
-        "authentication": "not_configured",
+        "authentication": "supabase" if DATABASE_URL else "development-bypass",
     }
 
 
