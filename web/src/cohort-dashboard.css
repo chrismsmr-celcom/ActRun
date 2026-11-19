@@ -106,3 +106,10 @@ body{background:var(--bg);font-feature-settings:"ss01" on,"cv11" on}
  .mobile-nav-trigger{display:grid!important}
 }
 .mobile-nav-trigger{display:none}
+
+
+/* Brand color accents: teal for flow, violet for selected structure, coral for collisions. */
+.workspace-avatar{background:var(--violet-soft);color:var(--violet)}
+.nav-link.active .nav-icon{color:var(--violet)}
+.profile-avatar{background:linear-gradient(135deg,var(--violet),var(--accent) 58%,var(--red));color:#fff}
+button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible{outline:2px solid var(--violet);outline-offset:2px}
