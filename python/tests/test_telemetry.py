@@ -37,3 +37,20 @@ def test_telemetry_reuses_installation_identifier(monkeypatch, tmp_path):
     first = telemetry._installation_id()
     second = telemetry._installation_id()
     assert first == second
+
+
+def test_collector_endpoint_is_disabled_by_default(monkeypatch):
+    from fastapi import HTTPException
+    from cerbere_cohort import api
+    from cerbere_cohort.api import TelemetryInstall
+    from uuid import uuid4
+
+    monkeypatch.setattr(api, "_telemetry_collector_enabled", lambda: False)
+    try:
+        api.register_telemetry_installation(TelemetryInstall(
+            installation_id=uuid4(), version="0.1.0", deployment_type="self-hosted"
+        ))
+    except HTTPException as exc:
+        assert exc.status_code == 404
+    else:
+        raise AssertionError("Disabled collector must reject telemetry")
