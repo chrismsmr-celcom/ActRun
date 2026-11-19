@@ -20,7 +20,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
 from cerbere_cohort.workspace import Branch
 from cerbere_cohort.telemetry import send_installation_ping
-from cerbere_cohort.auth import require_workspace_member, require_workspace_writer
+from cerbere_cohort.auth import (
+    configure_membership_db,
+    require_workspace_member,
+    require_workspace_writer,
+)
 
 from cerbere_cohort import (
     ConflictError,
@@ -53,6 +57,10 @@ workspace = (
     else PersistentWorkspace(DB_PATH, require_leases=REQUIRE_LEASES)
 )
 workspace._workspace._require_leases = REQUIRE_LEASES
+# Membership authorization shares the runtime's reconnecting, thread-safe DB
+# adapter instead of opening a fresh PostgreSQL connection per HTTP request.
+if DATABASE_URL:
+    configure_membership_db(workspace._conn)
 _lock = threading.RLock()
 _branches: dict[str, dict[str, Any]] = {}
 
