@@ -1,4 +1,5 @@
 import { FormEvent, useEffect, useState } from "react";
+import type { CSSProperties, ReactNode } from "react";
 import type { Session } from "@supabase/supabase-js";
 import CohortDashboard from "./CohortDashboard";
 import { authConfigured, authEnvironmentPresent, supabase } from "./auth";
@@ -70,7 +71,7 @@ export default function App() {
   );
 }
 
-function AuthScreen({ message, children }: { message: string; children?: React.ReactNode }) {
+function AuthScreen({ message, children }: { message: string; children?: ReactNode }) {
   return (
     <main style={{ minHeight: "100vh", display: "grid", placeItems: "center", background: "#f5f6f8", padding: 24 }}>
       <section style={{ width: "100%", maxWidth: 380, padding: 32, borderRadius: 16, background: "#fff", boxShadow: "0 12px 40px rgba(16,24,40,.08)", display: "grid", gap: 18 }}>
@@ -82,6 +83,6 @@ function AuthScreen({ message, children }: { message: string; children?: React.R
   );
 }
 
-const inputStyle: React.CSSProperties = { padding: "12px 13px", border: "1px solid #d0d5dd", borderRadius: 8, fontSize: 14 };
+const inputStyle: CSSProperties = { padding: "12px 13px", border: "1px solid #d0d5dd", borderRadius: 8, fontSize: 14 };
 const buttonStyle: React.CSSProperties = { padding: "12px 14px", border: 0, borderRadius: 8, background: "#161b26", color: "#fff", fontWeight: 600, cursor: "pointer" };
 const signOutStyle: React.CSSProperties = { position: "fixed", top: 12, right: 16, zIndex: 1000, padding: "8px 12px", border: "1px solid #d0d5dd", borderRadius: 8, background: "#fff", cursor: "pointer" };
