@@ -53,7 +53,15 @@ def _save_api_branch(branch_id: str, item: dict[str, Any]) -> None:
     workspace._conn.commit()
 
 def _restore_api_branches() -> None:
+    committed = {
+        (event.agent_id, event.payload.get('branch_name'))
+        for event in workspace.get_events()
+        if event.action == 'workspace.commit'
+    }
     for row in workspace._conn.execute('SELECT * FROM api_branches').fetchall():
+        if (row['agent_id'], row['branch_name']) in committed:
+            workspace._conn.execute("UPDATE api_branches SET status = 'merged', conflicting_keys_json = '[]' WHERE branch_id = ?", (row['branch_id'],))
+            continue
         base = workspace._workspace._snapshots.get(row['base_version'])
         if base is None:
             continue
@@ -61,6 +69,7 @@ def _restore_api_branches() -> None:
         b.current_data = json.loads(row['current_data_json'])
         b.intents = json.loads(row['intents_json'])
         _branches[row['branch_id']] = {'branch': b, 'agent_id': row['agent_id'], 'status': row['status'], 'conflicting_keys': json.loads(row['conflicting_keys_json']), 'created_at': row['created_at']}
+    workspace._conn.commit()
 
 _restore_api_branches()
 
