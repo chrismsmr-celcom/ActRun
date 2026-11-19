@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import "./cohort-dashboard.css";
 
-type Tab = "Overview" | "Branches" | "State" | "Settings";
+type Tab = "Overview" | "Branches" | "State" | "Event log" | "Settings";
 type EventItem = { event_id: string; timestamp: string; agent_id: string; action: string; payload: Record<string, unknown>; schema_version: string };
 type Branch = { id: string; name: string; agent_id: string; base_version: string; status: string; conflicting_keys: string[]; created_at: string };
 type StateItem = { key: string; value_hash: string; value: unknown };
@@ -38,7 +38,7 @@ export default function CohortDashboard() {
   const [sub, setSub] = useState<"Coordination" | "Conflicts">("Coordination");
   const [dark, setDark] = useState(() => localStorage.getItem("cohort-theme") === "dark");
   const [banner, setBanner] = useState(true);
-  const [sidebar, setSidebar] = useState(true);
+  const [sidebar, setSidebar] = useState(false);
   const [events, setEvents] = useState<EventItem[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [state, setState] = useState<{ head: string; parent: string | null; items: StateItem[] }>({ head: "", parent: null, items: [] });
@@ -158,106 +158,122 @@ export default function CohortDashboard() {
   };
   const replayEvent = events[replayIndex] || null;
 
-  return <div className={`cohort-app ${dark ? "is-dark" : ""}`}>
-    {banner && <div className="sample-banner"><span><b>{connected ? "Runtime connected." : "Runtime disconnected."}</b> {connected ? "Values below are read from the Cohort API." : "Start the Python API to load live workspace data."}</span><button onClick={() => setBanner(false)} aria-label="Dismiss">×</button></div>}
-    <header className="cohort-header">
-      <div className="cohort-brand">
-        <svg width="28" height="28" viewBox="0 0 200 200" aria-hidden="true"><circle cx="100" cy="65" r="50" fill="#8B5CF6"/><circle cx="70" cy="117" r="50" fill="#14B8A6" opacity=".95"/><circle cx="130" cy="117" r="50" fill="#FB7185" opacity=".95"/><circle cx="100" cy="100" r="22" fill="currentColor"/></svg>
-        <b>cerbere, inc</b><span className="admin-chip">Admin</span>
+  return <div className="cohort-app">
+    <aside className="app-nav">
+      <div className="brand-lockup">
+        <div className="brand-symbol"><span/><span/><span/></div>
+        <div><strong>cohort</strong><small>BY CERBERE</small></div>
       </div>
-      <div className="header-spacer"/>
-      <span className={connected ? "connection-state online" : "connection-state"}><i/> {connected ? "API connected" : "API offline"}</span>
-      <button className="icon-btn" title="Toggle theme" onClick={() => setDark(!dark)}>◐</button>
-      <button className="icon-btn" title="Under the hood" onClick={() => setSidebar(!sidebar)}>?</button>
-      <div className="user-avatar">C</div>
-    </header>
-    <div className="dashboard-shell">
-      <aside className={`under-sidebar ${sidebar ? "" : "is-closed"}`}>
-        <div className="under-inner">
-          <h2>Under the hood <button className="icon-btn" onClick={() => setSidebar(false)} aria-label="Close">×</button></h2>
-          <p className="under-sub">What Cohort does beyond branches and conflicts.</p>
-          <details open><summary>Event log and replay</summary><div className="under-body">
-            <input type="range" min="0" max={Math.max(0, events.length - 1)} value={replayIndex} onChange={(e) => setReplayIndex(Number(e.target.value))}/>
-            {replayEvent ? <><div className="kv"><span>event {replayIndex + 1} of {events.length}</span><span>head {short(state.head)}</span></div><pre className="code-block">{JSON.stringify(replayEvent, null, 2)}</pre><div className="success-note">✓ Event loaded from runtime log</div></> : <p className="empty-note">No events have been recorded yet.</p>}
-          </div></details>
-          <details><summary>Snapshots</summary><div className="under-body">
-            <div className="snapshot-entry"><b>{short(state.head)}</b><small>Current workspace HEAD · {state.items.length} keys</small></div>
-            {state.parent && <div className="snapshot-entry"><b>{short(state.parent)}</b><small>Parent snapshot</small></div>}
-            <p className="empty-note">Snapshots are derived from the runtime's content-addressed history.</p>
-          </div></details>
-          <details><summary>Conflict resolution</summary><div className="under-body">
-            {conflicts.length ? conflicts.map((branch) => <div className="snapshot-entry" key={branch.id}><b>{branch.name}</b><small>{branch.conflicting_keys.join(", ")}</small><button className="small-button" onClick={() => void openResolve(branch)}>Resolve conflict</button></div>) : <p className="empty-note">No unresolved branch conflicts.</p>}
-            <p className="empty-note">A resolver is a policy choice, not proof that the resulting content is correct.</p>
-          </div></details>
-          <details><summary>Leases</summary><div className="under-body">
-            {leases.length ? leases.map((lease) => <div className="lease-mini" key={lease.key}><b>{lease.key}</b><span>{lease.agent_id}</span><small>token {lease.fencing_token} · expires {dateTime(lease.expires_at)}</small><button className="small-button" onClick={() => void releaseLease(lease)}>Release lease</button></div>) : <p className="empty-note">No active leases.</p>}
-            <label className="field-label">Agent ID<input value={leaseAgent} onChange={(e) => setLeaseAgent(e.target.value)}/></label>
-            <label className="field-label">Resource key<input value={leaseKey} onChange={(e) => setLeaseKey(e.target.value)} placeholder="shared/resource"/></label>
-            <button className="primary-btn" onClick={acquireLease} disabled={busy || !leaseKey.trim()}>Acquire 60s lease</button>
-          </div></details>
-          <details><summary>Deadlock detection</summary><div className="under-body">
-            <div className={`deadlock-visual ${deadlock ? "cycle" : ""}`}><span>backend</span><span>database</span><span>frontend</span></div>
-            <p className={deadlock ? "error-note" : "success-note"}>{deadlock ? "Illustrative wait-for cycle: backend → database → frontend → backend." : "No simulated cycle. Deadlock detection runs in the runtime when agents wait for leases."}</p>
-            <button className="small-button" onClick={() => setDeadlock(!deadlock)}>{deadlock ? "Clear simulation" : "Simulate cycle"}</button>
-          </div></details>
-          <details><summary>Trace analyzer</summary><div className="under-body">
-            <p className="empty-note">Load an exported events.jsonl file.</p><input type="file" accept=".jsonl,.json,.txt" onChange={(e) => { const file = e.target.files?.[0]; if (file) void file.text().then(parseTrace); }}/>
-            <button className="small-button" onClick={() => parseTrace(traceText || events.map((event) => JSON.stringify(event)).join("\n"))}>Analyze current events</button>
-            <textarea rows={3} value={traceText} onChange={(e) => setTraceText(e.target.value)} placeholder="Paste JSONL events…"/>
-            {trace && <><div className="kv"><span>Actions</span><b>{Object.values(trace.actions).reduce((a, b) => a + b, 0)}</b></div>{Object.entries(trace.actions).map(([action, count]) => <div className="kv" key={action}><span>{action}</span><b>{count}</b></div>)}{trace.bad > 0 && <p className="error-note">{trace.bad} unreadable lines</p>}</>}
-          </div></details>
-          <details><summary>MCP and persistence</summary><div className="under-body">
-            <div className="kv"><span>Runtime API</span><b>{connected ? "connected" : "offline"}</b></div>
-            <div className="kv"><span>Persistence</span><b>{settings?.persistence || "—"}</b></div>
-            <div className="kv"><span>MCP server</span><b>stdio prototype</b></div>
-            <p className="empty-note">The MCP integration currently runs as a local stdio process. It is not exposed as a multi-user HTTP service.</p>
-          </div></details>
+      <div className="workspace-picker">
+        <div className="workspace-avatar">W</div>
+        <div className="workspace-meta"><strong>Workspace</strong><small>main environment</small></div>
+        <span className="nav-chevron">⌄</span>
+      </div>
+      <div className="nav-section-label">WORKSPACE</div>
+      <nav className="primary-nav">
+        {([
+          ["Overview","▦"],["Branches","⑂"],["State","◇"],["Event log","≡"],["Settings","⚙"]
+        ] as [Tab,string][]).map(([item,icon]) => <button key={item} className={tab===item?"nav-link active":"nav-link"} onClick={()=>setTab(item)}><span className="nav-icon">{icon}</span><span>{item==="State"?"Shared state":item}</span>{item==="Branches"&&openBranches.length>0&&<small>{openBranches.length}</small>}</button>)}
+      </nav>
+      <div className="nav-bottom">
+        <div className="runtime-status-card">
+          <div className="runtime-status-heading"><i className={connected?"is-online":""}/><strong>Runtime status</strong></div>
+          <p>{connected?"Connected to Cohort API":"Waiting for runtime connection"}</p>
+          <button onClick={()=>void refresh()}>{connected?"Refresh status":"Retry connection"} <span>↗</span></button>
         </div>
-      </aside>
-      <main className="cohort-main">
-        <nav className="cohort-tabs">
-          <button className="tab-control" onClick={() => setSidebar(!sidebar)} title="Toggle technical panel">{sidebar ? "◨" : "◧"}</button>
-          {(["Overview", "Branches", "State", "Settings"] as Tab[]).map((item) => <button key={item} className={tab === item ? "cohort-tab active" : "cohort-tab"} onClick={() => setTab(item)}>{item}</button>)}
-          <span className="tabs-spacer"/>
-          <button className="small-button" onClick={() => void refresh()}>Refresh</button>
-        </nav>
-        <div className="cohort-content">
-          {error && <div className="api-error"><b>Cannot load runtime data.</b> {error} <span>API expected at {API || "the current origin"}/api</span></div>}
-          {tab === "Overview" && <>
-            <div className="toolbar"><div className="scope-label">Workspace / main</div><button className="dark-btn" onClick={() => { const blob = new Blob([events.map((e) => JSON.stringify(e)).join("\n")], { type: "application/x-ndjson" }); const url = URL.createObjectURL(blob); const a = document.createElement("a"); a.href = url; a.download = "cohort-events.jsonl"; a.click(); URL.revokeObjectURL(url); }}>Export events</button></div>
-            <div className="sub-tabs">{(["Coordination", "Conflicts"] as const).map((item) => <button key={item} className={sub === item ? "selected" : ""} onClick={() => setSub(item)}>{item}</button>)}</div>
-            <div className="metric-grid">
-              <Metric label="Workspace keys" value={overview?.key_count ?? "—"}/>
-              <Metric label="Snapshots" value={overview?.snapshot_count ?? "—"}/>
-              <Metric label="Active leases" value={overview?.active_lease_count ?? "—"}/>
-              <Metric label="Conflicts detected" value={overview?.conflict_count ?? "—"} tone={conflicts.length ? "red" : "green"}/>
-            </div>
-            {sub === "Coordination" ? <div className="chart-grid">
-              <section className="panel"><PanelTitle title="Commits and coordination events" right="Last 14 days"/><div className="chart-wrap"><BarChart values={actionCounts.map((d) => d.commits)} tone="teal" labels={actionCounts.map((d) => d.label)}/></div><div className="panel-foot"><b>Top shared keys by write activity</b>{state.items.slice(0, 4).map((item) => <div className="rank-row" key={item.key}><span>{item.key}</span><i style={{ width: `${Math.max(5, (item.key.length / 40) * 100)}%` }}/><small>{short(item.value_hash)}</small></div>)}</div></section>
-              <section className="panel"><PanelTitle title="Conflicts detected" right="Last 14 days"/><div className="chart-wrap"><BarChart values={actionCounts.map((d) => d.conflicts)} tone="coral" labels={actionCounts.map((d) => d.label)}/></div><div className="panel-foot"><b>Open conflicting branches</b>{conflicts.length ? conflicts.map((branch) => <div className="rank-row" key={branch.id}><span>{branch.name}</span><i className="coral-bar" style={{ width: `${Math.min(100, branch.conflicting_keys.length * 30)}%` }}/><small>{branch.conflicting_keys.length} keys</small></div>) : <p className="empty-note">No unresolved conflicts.</p>}</div></section>
-            </div> : <div className="panel conflict-overview"><PanelTitle title="Unresolved branch conflicts" right={`${conflicts.length} open`}/>{conflicts.length ? conflicts.map((branch) => <div className="conflict-overview-row" key={branch.id}><div><b>{branch.name}</b><small>{branch.agent_id} · {branch.conflicting_keys.join(", ")}</small></div><button className="small-button" onClick={() => setResolveBranch(branch)}>Review resolution</button></div>) : <p className="empty-note">No unresolved conflicts have been reported by the runtime.</p>}</div>}
-            <div className="panel recent-events"><PanelTitle title="Recent runtime events" right={`${events.length} loaded`}/>{events.slice(0, 6).map((event) => <button className="event-line" key={event.event_id} onClick={() => { setReplayIndex(events.findIndex((item) => item.event_id === event.event_id)); setSidebar(true); }}><i/><b>{event.action}</b><span>{event.agent_id}</span><time>{timeAgo(event.timestamp)}</time></button>)}{!events.length && <p className="empty-note">No events yet. Create a branch or acquire a lease to generate the first runtime events.</p>}</div>
-          </>}
-          {tab === "Branches" && <><div className="branch-toolbar"><div className="search-input"><span>⌕</span><input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="Filter branches by name or agent…"/></div><div className="segmented"><button className={branchStatus === "open" ? "on" : ""} onClick={() => { setBranchStatus("open"); setSelected([]); }}>Open</button><button className={branchStatus === "merged" ? "on" : ""} onClick={() => { setBranchStatus("merged"); setSelected([]); }}>Merged</button></div><button className="primary-btn" onClick={() => setCreateOpen(true)}>+ New branch</button></div>
-            <div className="suggestions">Filter by <button onClick={() => setFilter("frontend")}>frontend</button><button onClick={() => setFilter("security")}>security</button><button onClick={() => setFilter("")}>clear</button></div>
-            <div className="branch-actions"><span>{visibleBranches.length} branches</span><span className="tabs-spacer"/><button className="dark-btn" disabled={!selected.length || busy} onClick={() => void run(async () => { for (const id of selected) { const b = branches.find((x) => x.id === id); if (b) { const result = await api<any>(`/branches/${b.id}/commit`, { method: "POST" }); if (result.conflict) throw new Error(`Conflict in ${b.name}: ${result.conflicting_keys.join(", ")}`); } } setSelected([]); }, "Selected branches merged")}>Merge selected</button></div>
-            <div className="panel table-scroll"><table><thead><tr><th><input type="checkbox" checked={visibleBranches.length > 0 && visibleBranches.every((b) => selected.includes(b.id))} onChange={(e) => setSelected(e.target.checked ? visibleBranches.filter((b) => !b.conflicting_keys.length).map((b) => b.id) : [])}/></th><th>Branch</th><th>Merge status</th><th>Created</th><th>Actions</th></tr></thead><tbody>{visibleBranches.map((branch) => <tr key={branch.id}><td><input type="checkbox" disabled={branch.conflicting_keys.length > 0} checked={selected.includes(branch.id)} onChange={(e) => setSelected((prev) => e.target.checked ? [...prev, branch.id] : prev.filter((id) => id !== branch.id))}/></td><td><b>{branch.name}</b><small>{branch.id.slice(0, 8)} · {branch.agent_id} · base {short(branch.base_version)}</small></td><td><span className={`status-dot-label ${branch.conflicting_keys.length ? "danger" : branch.status === "merged" ? "good" : ""}`}>{branch.status === "merged" ? "Merged" : branch.conflicting_keys.length ? `Conflict · ${branch.conflicting_keys.length} key(s)` : "Not merged"}</span></td><td>{timeAgo(branch.created_at)}</td><td>{branch.status === "open" ? branch.conflicting_keys.length ? <button className="small-button" onClick={() => setResolveBranch(branch)}>Resolve</button> : <button className="small-button" disabled={busy} onClick={() => void mergeBranch(branch)}>Merge</button> : "—"}</td></tr>)}{!visibleBranches.length && <tr><td colSpan={5} className="empty-cell">No branches in this view. Create one to start coordinating work.</td></tr>}</tbody></table></div>
-          </>}
-          {tab === "State" && <><h1>Shared state</h1><p className="page-intro">Current head <code>{short(state.head)}</code> · {state.items.length} keys · content-addressed values.</p><div className="panel table-scroll"><table><thead><tr><th>Key</th><th>Value hash</th><th>Value preview</th></tr></thead><tbody>{state.items.map((item) => <tr key={item.key}><td><b className="mono">{item.key}</b></td><td className="mono">{short(item.value_hash)}</td><td><code className="value-preview">{JSON.stringify(item.value)}</code></td></tr>)}{!state.items.length && <tr><td colSpan={3} className="empty-cell">Shared state is empty. Seed a workspace through the Python API before writing branches.</td></tr>}</tbody></table></div></>}
-          {tab === "Settings" && <><h1>Runtime settings</h1><p className="page-intro">Current configuration reported by the Cohort API.</p><div className="settings-grid"><section className="panel setting-card"><PanelTitle title="Workspace and persistence"/><Setting label="Storage backend" value={settings?.persistence || "—"}/><Setting label="Database path" value={settings?.database_path || "—"}/><Setting label="Lease enforcement" value={settings ? settings.require_leases ? "Required for writes" : "Advisory" : "—"}/></section><section className="panel setting-card"><PanelTitle title="Runtime limitations"/><Setting label="Multi-process coordination" value={settings ? settings.multi_process ? "Enabled" : "Not supported" : "—"}/><Setting label="Authentication" value={settings ? settings.authentication ? "Enabled" : "Not configured" : "—"}/><p className="warning-copy">The current API adapter is a single-process integration. Do not expose it publicly without authentication, authorization, tenant isolation and a durable branch registry.</p></section></div></>}
+        <button className="profile-control"><div className="profile-avatar">C</div><span><strong>Workspace admin</strong><small>Administrator</small></span><b>···</b></button>
+      </div>
+    </aside>
+
+    <div className="app-main">
+      <header className="topbar">
+        <div className="breadcrumbs"><span>Workspace</span><b>/</b><strong>{tab==="State"?"Shared state":tab}</strong></div>
+        <div className="topbar-actions">
+          <span className={connected?"connection-pill connected":"connection-pill"}><i/>{connected?"Runtime connected":"Runtime offline"}</span>
+          <button className="topbar-icon" onClick={()=>void refresh()} title="Refresh data">↻</button>
+          <button className="topbar-icon" onClick={()=>setDark(!dark)} title="Toggle theme">{dark?"☼":"◐"}</button>
+          <button className="topbar-icon" onClick={()=>setSidebar(!sidebar)} title="Technical inspector">⌘</button>
         </div>
+      </header>
+
+      <main className="page-content">
+        {error&&<div className="api-error"><strong>Runtime unavailable</strong><span>{error}</span><button onClick={()=>void refresh()}>Retry</button></div>}
+
+        {tab==="Overview"&&<>
+          <div className="page-heading">
+            <div><div className="eyebrow">WORKSPACE / MAIN</div><h1>Workspace overview</h1><p>See how your agents coordinate, share state and resolve competing changes.</p></div>
+            <div className="heading-actions"><span className="updated-label">Updated just now</span><button className="button-primary" onClick={()=>setCreateOpen(true)}>＋ New branch</button></div>
+          </div>
+          <div className="health-strip">
+            <div className="health-copy"><span className="health-indicator"/><div><strong>{connected?"Coordination runtime is reachable":"Runtime connection required"}</strong><small>{connected?"Workspace data is being read from the live API.":"Start the Cohort API to load live workspace activity."}</small></div></div>
+            <div className="health-meta"><span>HEAD <code>{short(state.head)}</code></span><span>{state.items.length} shared keys</span><span>{overview?.snapshot_count??0} snapshots</span></div>
+          </div>
+          <section className="metric-grid">
+            <Metric label="Open branches" value={openBranches.length}/>
+            <Metric label="Unresolved conflicts" value={conflicts.length} tone={conflicts.length?"red":""}/>
+            <Metric label="Active leases" value={leases.length}/>
+            <Metric label="Recorded events" value={overview?.event_count??events.length}/>
+          </section>
+          <div className="overview-grid">
+            <section className="surface-card activity-card">
+              <div className="surface-heading"><div><h2>Coordination activity</h2><p>Commits and conflict events · last 14 days</p></div><span className="subtle-tag">LIVE DATA</span></div>
+              <div className="chart-legend"><span><i className="legend-commit"/>Commits</span><span><i className="legend-conflict"/>Conflicts</span></div>
+              <div className="activity-chart">
+                <div className="chart-axis"><span>{Math.max(1,...actionCounts.map(d=>Math.max(d.commits,d.conflicts)))}</span><span>0</span></div>
+                <div className="chart-columns">{actionCounts.map((d,i)=>{const max=Math.max(1,...actionCounts.map(x=>Math.max(x.commits,x.conflicts)));return <div className="chart-day" key={i}><div className="chart-bars"><i className="commit-bar" style={{height:(d.commits/max*100)+"%"}} title={d.commits+" commits"}/><i className="conflict-bar" style={{height:(d.conflicts/max*100)+"%"}} title={d.conflicts+" conflicts"}/></div><small>{i%2===0?d.label:""}</small></div>})}</div>
+              </div>
+              <div className="chart-footer"><span>Daily event volume</span><span>{events.length} events loaded</span></div>
+            </section>
+            <section className="surface-card conflict-card">
+              <div className="surface-heading"><div><h2>Needs attention</h2><p>Conflicts that require a resolution</p></div><span className={conflicts.length?"count-badge warning":"count-badge"}>{conflicts.length}</span></div>
+              {conflicts.length?conflicts.slice(0,4).map(branch=><div className="attention-row" key={branch.id}><div className="attention-mark">!</div><div className="attention-detail"><strong>{branch.name}</strong><small>{branch.agent_id} · {branch.conflicting_keys.length} conflicting key(s)</small></div><button className="text-action" onClick={()=>void openResolve(branch)}>Review <span>→</span></button></div>):<div className="empty-state compact"><div className="empty-check">✓</div><strong>No conflicts to resolve</strong><p>Branches are clear to merge.</p></div>}
+              <button className="card-footer-link" onClick={()=>{setTab("Branches");setBranchStatus("open")}}>View all branches <span>→</span></button>
+            </section>
+          </div>
+          <section className="surface-card recent-card">
+            <div className="surface-heading"><div><h2>Recent activity</h2><p>Latest events recorded by the coordination runtime</p></div><button className="button-secondary compact-button" onClick={()=>setTab("Event log")}>Open event log</button></div>
+            {events.slice(0,6).length?<div className="data-table-wrap"><table className="data-table"><thead><tr><th>EVENT</th><th>AGENT</th><th>EVENT ID</th><th>TIME</th></tr></thead><tbody>{events.slice(0,6).map(event=><tr key={event.event_id}><td><span className="event-name"><i className={/conflict|abort|reject/.test(event.action)?"event-dot danger":/commit|resolve/.test(event.action)?"event-dot success":"event-dot"}/>{event.action}</span></td><td>{event.agent_id}</td><td><code>{short(event.event_id)}</code></td><td>{timeAgo(event.timestamp)}</td></tr>)}</tbody></table></div>:<div className="empty-state"><strong>No activity recorded yet</strong><p>Create a branch or acquire a lease to start recording coordination events.</p></div>}
+          </section>
+        </>}
+
+        {tab==="Branches"&&<>
+          <div className="page-heading"><div><div className="eyebrow">WORKSPACE / COORDINATION</div><h1>Branches</h1><p>Isolated workspaces where agents can make changes without overwriting one another.</p></div><button className="button-primary" onClick={()=>setCreateOpen(true)}>＋ Create branch</button></div>
+          <div className="branch-controls"><div className="search-control"><span>⌕</span><input value={filter} onChange={e=>setFilter(e.target.value)} placeholder="Search branches or agents"/></div><div className="segmented-control"><button className={branchStatus==="open"?"active":""} onClick={()=>{setBranchStatus("open");setSelected([])}}>Open <b>{openBranches.length}</b></button><button className={branchStatus==="merged"?"active":""} onClick={()=>{setBranchStatus("merged");setSelected([])}}>Merged</button></div></div>
+          <div className="table-toolbar"><span>{visibleBranches.length} branches</span><button className="button-secondary" disabled={!selected.length||busy} onClick={()=>void run(async()=>{for(const id of selected){const b=branches.find(x=>x.id===id);if(b){const result=await api<any>(\`/branches/\${b.id}/commit\`,{method:"POST"});if(result.conflict)throw new Error(\`Conflict in \${b.name}: \${result.conflicting_keys.join(", ")}\`)}}setSelected([])},"Selected branches merged")}>Merge selected ({selected.length})</button></div>
+          <section className="surface-card table-surface"><div className="data-table-wrap"><table className="data-table"><thead><tr><th><input type="checkbox" checked={visibleBranches.length>0&&visibleBranches.every(b=>selected.includes(b.id))} onChange={e=>setSelected(e.target.checked?visibleBranches.filter(b=>!b.conflicting_keys.length).map(b=>b.id):[])}/></th><th>BRANCH</th><th>OWNER</th><th>BASE VERSION</th><th>STATUS</th><th>CREATED</th><th/></tr></thead><tbody>{visibleBranches.map(branch=><tr key={branch.id}><td><input type="checkbox" disabled={branch.conflicting_keys.length>0} checked={selected.includes(branch.id)} onChange={e=>setSelected(prev=>e.target.checked?[...prev,branch.id]:prev.filter(id=>id!==branch.id))}/></td><td><strong>{branch.name}</strong><small>{branch.id.slice(0,8)}</small></td><td>{branch.agent_id}</td><td><code>{short(branch.base_version)}</code></td><td><span className={branch.status==="merged"?"status-tag success":branch.conflicting_keys.length?"status-tag danger":"status-tag neutral"}><i/>{branch.status==="merged"?"Merged":branch.conflicting_keys.length?"Conflict":"Open"}</span></td><td>{timeAgo(branch.created_at)}</td><td>{branch.status==="open"?(branch.conflicting_keys.length?<button className="text-action" onClick={()=>void openResolve(branch)}>Resolve →</button>:<button className="text-action" disabled={busy} onClick={()=>void mergeBranch(branch)}>Merge →</button>):"—"}</td></tr>)}{!visibleBranches.length&&<tr><td colSpan={7}><div className="empty-state"><strong>No branches found</strong><p>Create a branch to give an agent an isolated place to work.</p></div></td></tr>}</tbody></table></div></section>
+        </>}
+
+        {tab==="State"&&<>
+          <div className="page-heading"><div><div className="eyebrow">WORKSPACE / SHARED MEMORY</div><h1>Shared state</h1><p>A content-addressed view of the values agents read and write together.</p></div><span className="state-head-label">HEAD <code>{short(state.head)}</code></span></div>
+          <section className="surface-card"><div className="surface-heading"><div><h2>Workspace keys</h2><p>{state.items.length} keys in the current snapshot</p></div><span className="subtle-tag">CONTENT ADDRESSED</span></div><div className="data-table-wrap"><table className="data-table"><thead><tr><th>KEY</th><th>VALUE HASH</th><th>VALUE PREVIEW</th></tr></thead><tbody>{state.items.map(item=><tr key={item.key}><td><strong className="mono-text">{item.key}</strong></td><td><code>{short(item.value_hash)}</code></td><td><code className="value-preview">{JSON.stringify(item.value)}</code></td></tr>)}{!state.items.length&&<tr><td colSpan={3}><div className="empty-state"><strong>Shared state is empty</strong><p>Seed a workspace through the Cohort runtime before writing branch data.</p></div></td></tr>}</tbody></table></div></section>
+        </>}
+
+        {tab==="Event log"&&<>
+          <div className="page-heading"><div><div className="eyebrow">WORKSPACE / AUDIT TRAIL</div><h1>Event log</h1><p>An ordered record of coordination decisions, writes, leases and branch operations.</p></div><button className="button-secondary" onClick={()=>{const blob=new Blob([events.map(e=>JSON.stringify(e)).join("\\n")],{type:"application/x-ndjson"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download="cohort-events.jsonl";a.click();URL.revokeObjectURL(url)}}>↓ Export JSONL</button></div>
+          <div className="branch-controls"><div className="search-control"><span>⌕</span><input value={filter} onChange={e=>setFilter(e.target.value)} placeholder="Filter by event, agent or ID"/></div><span className="event-total">{events.length} events loaded</span></div>
+          <section className="surface-card"><div className="data-table-wrap"><table className="data-table"><thead><tr><th>EVENT</th><th>AGENT</th><th>EVENT ID</th><th>RECORDED AT</th><th/></tr></thead><tbody>{events.filter(e=>(e.action+" "+e.agent_id+" "+e.event_id).toLowerCase().includes(filter.toLowerCase())).map(event=><tr key={event.event_id}><td><span className="event-name"><i className={/conflict|abort|reject/.test(event.action)?"event-dot danger":/commit|resolve/.test(event.action)?"event-dot success":"event-dot"}/>{event.action}</span></td><td>{event.agent_id}</td><td><code>{short(event.event_id)}</code></td><td>{new Date(event.timestamp).toLocaleString()}</td><td><button className="text-action" onClick={()=>{setReplayIndex(events.findIndex(e=>e.event_id===event.event_id));setSidebar(true)}}>Inspect →</button></td></tr>)}</tbody></table></div></section>
+        </>}
+
+        {tab==="Settings"&&<>
+          <div className="page-heading"><div><div className="eyebrow">WORKSPACE / CONFIGURATION</div><h1>Runtime settings</h1><p>Inspect the configuration and operational boundaries of this Cohort instance.</p></div></div>
+          <div className="settings-layout"><section className="surface-card"><div className="surface-heading"><div><h2>Storage and coordination</h2><p>Current runtime configuration</p></div></div><Setting label="Storage backend" value={settings?.persistence||"—"}/><Setting label="Database path" value={settings?.database_path||"—"}/><Setting label="Lease enforcement" value={settings?(settings.require_leases?"Required for writes":"Advisory"):"—"}/></section><section className="surface-card"><div className="surface-heading"><div><h2>Runtime capabilities</h2><p>Features reported by the API adapter</p></div></div><Setting label="Multi-process coordination" value={settings?(settings.multi_process?"Enabled":"Single process"):"—"}/><Setting label="Authentication" value={settings?(settings.authentication?"Enabled":"Not configured"):"—"}/><div className="security-notice"><strong>Deployment note</strong><p>The current adapter is intended for local development. Do not expose it publicly without authentication, authorization, tenant isolation and a durable branch registry.</p></div></section></div>
+        </>}
       </main>
     </div>
-    {createOpen && <div className="modal-backdrop" onClick={() => setCreateOpen(false)}><div className="modal-card" onClick={(e) => e.stopPropagation()}><div className="modal-head"><h2>Create branch</h2><button className="icon-btn" onClick={() => setCreateOpen(false)}>×</button></div><label className="field-label">Agent ID<input value={agentId} onChange={(e) => setAgentId(e.target.value)} placeholder="agent-backend"/></label><label className="field-label">Branch name<input value={branchName} onChange={(e) => setBranchName(e.target.value)} placeholder="implement-api"/></label><div className="modal-actions"><button className="small-button" onClick={() => setCreateOpen(false)}>Cancel</button><button className="primary-btn" disabled={busy || !agentId.trim() || !branchName.trim()} onClick={() => void createBranch()}>Create branch</button></div></div></div>}
-    {resolveBranch && <div className="modal-backdrop" onClick={() => setResolveBranch(null)}><div className="modal-card" onClick={(e) => e.stopPropagation()}><div className="modal-head"><h2>Resolve {resolveBranch.name}</h2><button className="icon-btn" onClick={() => setResolveBranch(null)}>×</button></div><p className="page-intro">Conflicting keys: {resolveBranch.conflicting_keys.join(", ")}</p>{conflictDetails.map((detail) => <div className="conflict-context" key={detail.key}><b>{detail.key}</b><div className="three-way"><div><span>Base</span><pre>{detail.base_present ? JSON.stringify(detail.base, null, 2) : "∅ absent"}</pre></div><div><span>HEAD</span><pre>{detail.head_present ? JSON.stringify(detail.head, null, 2) : "∅ absent"}</pre></div><div><span>Branch</span><pre>{detail.branch_present ? JSON.stringify(detail.branch, null, 2) : "∅ absent"}</pre></div></div></div>)}<label className="field-label">Resolution strategy<select value={strategy} onChange={(e) => setStrategy(e.target.value)}><option>PreferHead</option><option>PreferBranch</option><option>PreferAgent</option></select></label>{strategy === "PreferAgent" && <label className="field-label">Agent priority (comma-separated)<input value={agentPriority} onChange={(e) => setAgentPriority(e.target.value)} placeholder="agent-backend, agent-frontend"/></label>}<label className="field-label">Rationale<textarea rows={3} value={rationale} onChange={(e) => setRationale(e.target.value)} placeholder="Explain why this side should be retained."/></label><p className="warning-copy">The selected resolver decides conflicting values. Review the result in your application; Cohort cannot verify semantic correctness.</p><div className="modal-actions"><button className="small-button" onClick={() => setResolveBranch(null)}>Cancel</button><button className="primary-btn" disabled={busy || !rationale.trim()} onClick={() => void resolve()}>Record decision</button></div></div></div>}
-    {notice && <div className="toast">{notice}</div>}
+
+    {sidebar&&<div className="inspector-backdrop" onClick={()=>setSidebar(false)}><aside className="inspector-panel" onClick={e=>e.stopPropagation()}><div className="inspector-header"><div><span className="eyebrow">RUNTIME INSPECTOR</span><h2>Execution details</h2></div><button className="topbar-icon" onClick={()=>setSidebar(false)}>×</button></div><p className="inspector-intro">Inspect the underlying coordination primitives and event data.</p>
+      <details open><summary>Event replay</summary><div className="inspector-body"><input type="range" min="0" max={Math.max(0,events.length-1)} value={replayIndex} onChange={e=>setReplayIndex(Number(e.target.value))}/>{replayEvent?<><div className="inspector-meta"><span>EVENT {replayIndex+1} / {events.length}</span><span>{short(state.head)}</span></div><pre className="code-block">{JSON.stringify(replayEvent,null,2)}</pre></>:<p className="empty-copy">No events recorded.</p>}</div></details>
+      <details><summary>Snapshots</summary><div className="inspector-body"><div className="inspector-record"><strong>{short(state.head)}</strong><small>Current HEAD · {state.items.length} keys</small></div>{state.parent&&<div className="inspector-record"><strong>{short(state.parent)}</strong><small>Parent snapshot</small></div>}</div></details>
+      <details><summary>Leases</summary><div className="inspector-body">{leases.length?leases.map(lease=><div className="inspector-record" key={lease.key}><strong>{lease.key}</strong><small>{lease.agent_id} · fencing token {lease.fencing_token}</small><button className="button-secondary compact-button" onClick={()=>void releaseLease(lease)}>Release lease</button></div>):<p className="empty-copy">No active leases.</p>}<label className="form-label">Agent ID<input value={leaseAgent} onChange={e=>setLeaseAgent(e.target.value)}/></label><label className="form-label">Resource key<input value={leaseKey} onChange={e=>setLeaseKey(e.target.value)} placeholder="shared/resource"/></label><button className="button-primary full-button" disabled={busy||!leaseKey.trim()} onClick={acquireLease}>Acquire 60s lease</button></div></details>
+      <details><summary>Trace analyzer</summary><div className="inspector-body"><p className="empty-copy">Load an exported JSONL event trace.</p><input type="file" accept=".jsonl,.json,.txt" onChange={e=>{const file=e.target.files?.[0];if(file)void file.text().then(parseTrace)}}/><textarea rows={3} value={traceText} onChange={e=>setTraceText(e.target.value)} placeholder="Paste JSONL events…"/><button className="button-secondary compact-button" onClick={()=>parseTrace(traceText||events.map(e=>JSON.stringify(e)).join("\\n"))}>Analyze events</button>{trace&&Object.entries(trace.actions).map(([action,count])=><div className="inspector-meta" key={action}><span>{action}</span><strong>{count}</strong></div>)}</div></details>
+      <details><summary>MCP and persistence</summary><div className="inspector-body"><div className="inspector-meta"><span>API</span><strong>{connected?"Connected":"Offline"}</strong></div><div className="inspector-meta"><span>Storage</span><strong>{settings?.persistence||"—"}</strong></div><div className="inspector-meta"><span>MCP</span><strong>Local stdio</strong></div><p className="empty-copy">MCP is currently a local stdio integration, not a hosted multi-user service.</p></div></details>
+    </aside></div>}
+
+    {createOpen&&<div className="modal-backdrop" onClick={()=>setCreateOpen(false)}><div className="modal-card" onClick={e=>e.stopPropagation()}><div className="modal-head"><div><span className="eyebrow">WORKSPACE / BRANCHES</span><h2>Create branch</h2></div><button className="topbar-icon" onClick={()=>setCreateOpen(false)}>×</button></div><p className="modal-description">Give an agent an isolated branch to work in.</p><label className="form-label">Agent ID<input value={agentId} onChange={e=>setAgentId(e.target.value)} placeholder="agent-backend"/></label><label className="form-label">Branch name<input value={branchName} onChange={e=>setBranchName(e.target.value)} placeholder="implement-api"/></label><div className="modal-actions"><button className="button-secondary" onClick={()=>setCreateOpen(false)}>Cancel</button><button className="button-primary" disabled={busy||!agentId.trim()||!branchName.trim()} onClick={()=>void createBranch()}>Create branch</button></div></div></div>}
+    {resolveBranch&&<div className="modal-backdrop" onClick={()=>setResolveBranch(null)}><div className="modal-card resolve-modal" onClick={e=>e.stopPropagation()}><div className="modal-head"><div><span className="eyebrow">CONFLICT REVIEW</span><h2>Resolve {resolveBranch.name}</h2></div><button className="topbar-icon" onClick={()=>setResolveBranch(null)}>×</button></div><p className="modal-description">Review the competing values before applying a resolution.</p>{conflictDetails.map(detail=><div className="conflict-context" key={detail.key}><strong>{detail.key}</strong><div className="three-way">{([{label:"Base",value:detail.base,present:detail.base_present},{label:"HEAD",value:detail.head,present:detail.head_present},{label:"Branch",value:detail.branch,present:detail.branch_present}]).map(item=><div key={item.label}><span>{item.label}</span><pre>{item.present?JSON.stringify(item.value,null,2):"∅ absent"}</pre></div>)}</div></div>)}<label className="form-label">Resolution strategy<select value={strategy} onChange={e=>setStrategy(e.target.value)}><option>PreferHead</option><option>PreferBranch</option><option>PreferAgent</option></select></label>{strategy==="PreferAgent"&&<label className="form-label">Agent priority<input value={agentPriority} onChange={e=>setAgentPriority(e.target.value)} placeholder="agent-backend, agent-frontend"/></label>}<label className="form-label">Decision rationale<textarea rows={3} value={rationale} onChange={e=>setRationale(e.target.value)} placeholder="Explain why this resolution is appropriate."/></label><div className="security-notice"><strong>Review required</strong><p>The resolver applies a deterministic policy. It cannot determine whether the resulting code is semantically correct.</p></div><div className="modal-actions"><button className="button-secondary" onClick={()=>setResolveBranch(null)}>Cancel</button><button className="button-primary" disabled={busy||!rationale.trim()} onClick={()=>void resolve()}>Record resolution</button></div></div></div>}
+    {notice&&<div className="toast">{notice}</div>}
   </div>;
 }
 
-function Metric({ label, value, tone }: { label: string; value: string | number; tone?: string }) { return <div className="metric-card"><small>{label}</small><strong className={tone || ""}>{value}</strong></div>; }
-function PanelTitle({ title, right }: { title: string; right?: string }) { return <div className="panel-title"><span>{title}</span>{right && <small>{right}</small>}</div>; }
+function Metric({ label, value, tone }: { label: string; value: string | number; tone?: string }) { return <div className="metric-card"><span>{label}</span><strong className={tone || ""}>{value}</strong></div>; }
 function Setting({ label, value }: { label: string; value: string }) { return <div className="setting-line"><span>{label}</span><code>{value}</code></div>; }
-function BarChart({ values, tone, labels }: { values: number[]; tone: "teal" | "coral"; labels: string[] }) {
-  const max = Math.max(1, ...values);
-  return <div className="bar-chart"><div className="chart-y"><span>{max}</span><span>{Math.round(max / 2)}</span><span>0</span></div><div className="bars">{values.map((value, i) => <div className="bar-column" key={i}><div className={`bar ${tone}`} style={{ height: `${Math.max(2, value / max * 100)}%` }} title={`${labels[i]}: ${value}`}/><small>{i % 2 === 0 ? labels[i] : ""}</small></div>)}</div></div>;
-}
