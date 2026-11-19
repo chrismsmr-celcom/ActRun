@@ -29,7 +29,7 @@ class _Connection:
             import psycopg
         except ImportError as exc:
             raise RuntimeError("Install psycopg[binary]>=3.2 for PostgreSQL support") from exc
-        self._db = psycopg.connect(dsn, row_factory=_row_factory, connect_timeout=15)
+        self._db = psycopg.connect(dsn, row_factory=_row_factory, connect_timeout=15, autocommit=True)
         self._lock = threading.RLock()
 
     @staticmethod
@@ -38,6 +38,7 @@ class _Connection:
         upper = statement.upper()
         if upper == "BEGIN IMMEDIATE":
             return "BEGIN"
+        ignore_insert = bool(re.match(r"^INSERT\\s+OR\\s+IGNORE\\s+INTO", statement, flags=re.I))
         statement = re.sub(r"^INSERT\\s+OR\\s+IGNORE\\s+INTO", "INSERT INTO", statement, flags=re.I)
         if re.match(r"^INSERT\\s+OR\\s+REPLACE\\s+INTO", statement, flags=re.I):
             statement = re.sub(r"^INSERT\\s+OR\\s+REPLACE\\s+INTO", "INSERT INTO", statement, flags=re.I)
@@ -53,6 +54,8 @@ class _Connection:
         statement = re.sub(r"ORDER\\s+BY\\s+rowid", "ORDER BY seq", statement, flags=re.I)
         statement = statement.replace("MAX(fencing_token, excluded.fencing_token)",
                                       "GREATEST(lease_counters.fencing_token, EXCLUDED.fencing_token)")
+        if ignore_insert and "ON CONFLICT" not in statement.upper():
+            statement += " ON CONFLICT DO NOTHING"
         return statement.replace("?", "%s")
 
     def execute(self, sql: str, params=()):
