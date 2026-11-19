@@ -310,3 +310,18 @@ body{
 }
 .mobile-nav-trigger{display:none}
 @media(prefers-reduced-motion:reduce){*,*:before,*:after{animation-duration:.01ms!important;animation-iteration-count:1!important;scroll-behavior:auto!important;transition-duration:.01ms!important}}
+
+
+/* Mobile navigation backdrop: keeps the drawer clear of the workspace content. */
+.mobile-nav-backdrop{
+ position:fixed;inset:0;z-index:34;border:0;padding:0;margin:0;
+ background:rgba(8,9,11,.48);backdrop-filter:blur(2px);
+ animation:cohort-fade-in .18s ease both;
+}
+@media(min-width:721px){.mobile-nav-backdrop{display:none}}
+@media(max-width:720px){
+ .app-nav{z-index:35}
+ .mobile-nav-backdrop{display:block}
+ .cohort-app.mobile-nav-open{overflow:hidden}
+ .brand-lockup{padding-bottom:18px}
+}
