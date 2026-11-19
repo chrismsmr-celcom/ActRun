@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, feat/production-supabase-render]
   pull_request:
 
 permissions:
@@ -25,7 +25,7 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
       - name: Install
-        run: python -m pip install -e ".[dev]"
+        run: python -m pip install -e ".[dev,postgres]"
       - name: Import HTTP API adapter
         run: python -c "from cerbere_cohort.api import app; assert app"
       - name: Test
@@ -58,7 +58,7 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install library and MCP server
-        run: python -m pip install -e ./python -e ./integrations/mcp-server pytest
+        run: python -m pip install -e './python[postgres]' -e ./integrations/mcp-server pytest
       - name: Test MCP service
         run: python -m pytest integrations/mcp-server/tests
 
