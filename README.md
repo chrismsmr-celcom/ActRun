@@ -215,6 +215,14 @@ cargo run -p cerbere-cohort-trace -- example-trace.jsonl
 
 The Python event model, JSON Schema, sample JSONL log, and Rust parser now use the same `1.0.0` envelope. The Python reader and Rust parser also accept legacy records that omit `schema_version`, treating them as `1.0.0`. New events always serialize the version field. The current conflict metric is calculated as conflict events divided by successful plus aborted commit attempts. The analyzer remains an early prototype; run it against your own exported logs before depending on its metrics.
 
+## Deployment guides
+
+- [Deploy the SaaS beta](docs/DEPLOYMENT.md) — Vercel, Render, Supabase, environment variables, and verification.
+- [Self-host Cohort Community](docs/SELF_HOSTING.md) — Docker Compose with local SQLite, localhost-only by default.
+- [Traction measurement](docs/TRACTION.md) — GitHub clone archive, opt-in installation telemetry, and product adoption metrics.
+
+The SaaS deployment remains the primary product. Self-hosting is an early, local-only Community path; public multi-user self-hosting is not supported yet.
+
 ## Hosted REST API (early beta)
 
 The repository also contains a FastAPI service for a hosted Cohort deployment. It is separate from the local Python-library quick start above.
@@ -309,6 +317,8 @@ flowchart TD
 | FastAPI REST API and persisted REST branch registry | Implemented; single-organization, single-instance deployment only |
 | Supabase JWT authentication and organization membership checks | Implemented for hosted PostgreSQL mode; not general multi-tenant isolation |
 | Branch diff preview | Implemented at `GET /api/branches/{branch_id}/diff` |
+| Opt-in self-hosted installation telemetry | Implemented; disabled by default; requires an explicitly configured collector URL |
+| GitHub traffic archive | Scheduled workflow; requires a repository traffic-read token secret |
 | MCP stdio integration | Prototype; separate branch registry, not shared with REST |
 | Rust trace analyzer | Prototype; versioned Python JSONL contract aligned |
 | Versioned event schema (`1.0.0`) | Implemented; legacy records remain readable |
