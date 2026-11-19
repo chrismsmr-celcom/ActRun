@@ -42,6 +42,7 @@ export default function CohortDashboard() {
   const [banner, setBanner] = useState(true);
   const [sidebar, setSidebar] = useState(false);
   const [navCollapsed, setNavCollapsed] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [events, setEvents] = useState<EventItem[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [state, setState] = useState<{ head: string; parent: string | null; items: StateItem[] }>({ head: "", parent: null, items: [] });
@@ -161,12 +162,12 @@ export default function CohortDashboard() {
   };
   const replayEvent = events[replayIndex] || null;
 
-  return <div className={`cohort-app${navCollapsed ? " nav-collapsed" : ""}`}>
+  return <div className={`cohort-app${navCollapsed ? " nav-collapsed" : ""}${mobileNavOpen ? " mobile-nav-open" : ""}`}>
     <aside className="app-nav">
       <div className="brand-lockup">
         <img className="brand-logo" src={cohortLogo} alt="Cohort" />
         <div className="brand-wordmark"><strong>cohort</strong><small>BY CERBERE</small></div>
-        <button className="nav-collapse-button" onClick={()=>setNavCollapsed(!navCollapsed)} title={navCollapsed ? "Expand navigation" : "Collapse navigation"} aria-label={navCollapsed ? "Expand navigation" : "Collapse navigation"}>{navCollapsed?<PanelLeftOpen size={16}/>:<PanelLeftClose size={16}/>}</button>
+        <button className="nav-collapse-button" onClick={()=>{if(window.matchMedia("(max-width: 720px)").matches)setMobileNavOpen(!mobileNavOpen);else setNavCollapsed(!navCollapsed)}} title={navCollapsed ? "Expand navigation" : "Collapse navigation"} aria-label={navCollapsed ? "Expand navigation" : "Collapse navigation"}>{navCollapsed?<PanelLeftOpen size={16}/>:<PanelLeftClose size={16}/>}</button>
       </div>
       <div className="workspace-picker">
         <div className="workspace-avatar">W</div>
@@ -181,7 +182,7 @@ export default function CohortDashboard() {
           {item:"State" as Tab, icon:<Database size={17}/>, label:"Shared state"},
           {item:"Event log" as Tab, icon:<ScrollText size={17}/>, label:"Event log"},
           {item:"Settings" as Tab, icon:<Settings2 size={17}/>, label:"Settings"}
-        ]).map(({item,icon,label}) => <button key={item} className={tab===item?"nav-link active":"nav-link"} onClick={()=>setTab(item)} title={navCollapsed?label:undefined}><span className="nav-icon">{icon}</span><span className="nav-label">{label}</span>{item==="Branches"&&openBranches.length>0&&<small>{openBranches.length}</small>}</button>)}
+        ]).map(({item,icon,label}) => <button key={item} className={tab===item?"nav-link active":"nav-link"} onClick={()=>{setTab(item);setMobileNavOpen(false)}} title={navCollapsed?label:undefined}><span className="nav-icon">{icon}</span><span className="nav-label">{label}</span>{item==="Branches"&&openBranches.length>0&&<small>{openBranches.length}</small>}</button>)}
       </nav>
       <div className="nav-bottom">
         <div className="runtime-status-card">
@@ -195,7 +196,7 @@ export default function CohortDashboard() {
 
     <div className="app-main">
       <header className="topbar">
-        <div className="breadcrumbs"><span>Workspace</span><b>/</b><strong>{tab==="State"?"Shared state":tab}</strong></div>
+        <div className="breadcrumbs"><button className="topbar-icon mobile-nav-trigger" onClick={()=>setMobileNavOpen(!mobileNavOpen)} title="Open navigation"><PanelLeftOpen size={16}/></button><span>Workspace</span><b>/</b><strong>{tab==="State"?"Shared state":tab}</strong></div>
         <div className="topbar-actions">
           <span className={connected?"connection-pill connected":"connection-pill"}><i/>{connected?"Runtime connected":"Runtime offline"}</span>
           <button className="topbar-icon" onClick={()=>void refresh()} title="Refresh data"><RefreshCw size={15}/></button>
