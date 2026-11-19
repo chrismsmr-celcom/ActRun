@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { Activity, ChevronDown, Command, Database, GitBranch, LayoutDashboard, Moon, PanelLeftClose, PanelLeftOpen, RefreshCw, ScrollText, Settings2, Sun } from "lucide-react";
+import cohortLogo from "./cohortLogo";
 import "./cohort-dashboard.css";
 
 type Tab = "Overview" | "Branches" | "State" | "Event log" | "Settings";
@@ -39,6 +41,8 @@ export default function CohortDashboard() {
   const [dark, setDark] = useState(() => localStorage.getItem("cohort-theme") === "dark");
   const [banner, setBanner] = useState(true);
   const [sidebar, setSidebar] = useState(false);
+  const [navCollapsed, setNavCollapsed] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [events, setEvents] = useState<EventItem[]>([]);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [state, setState] = useState<{ head: string; parent: string | null; items: StateItem[] }>({ head: "", parent: null, items: [] });
@@ -158,22 +162,27 @@ export default function CohortDashboard() {
   };
   const replayEvent = events[replayIndex] || null;
 
-  return <div className="cohort-app">
+  return <div className={`cohort-app${navCollapsed ? " nav-collapsed" : ""}${mobileNavOpen ? " mobile-nav-open" : ""}`}>
     <aside className="app-nav">
       <div className="brand-lockup">
-        <div className="brand-symbol"><span/><span/><span/></div>
-        <div><strong>cohort</strong><small>BY CERBERE</small></div>
+        <img className="brand-logo" src={cohortLogo} alt="Cohort" />
+        <div className="brand-wordmark"><strong>cohort</strong><small>BY CERBERE</small></div>
+        <button className="nav-collapse-button" onClick={()=>{if(window.matchMedia("(max-width: 720px)").matches)setMobileNavOpen(!mobileNavOpen);else setNavCollapsed(!navCollapsed)}} title={navCollapsed ? "Expand navigation" : "Collapse navigation"} aria-label={navCollapsed ? "Expand navigation" : "Collapse navigation"}>{navCollapsed?<PanelLeftOpen size={16}/>:<PanelLeftClose size={16}/>}</button>
       </div>
       <div className="workspace-picker">
         <div className="workspace-avatar">W</div>
         <div className="workspace-meta"><strong>Workspace</strong><small>main environment</small></div>
-        <span className="nav-chevron">⌄</span>
+        <ChevronDown className="nav-chevron" size={15}/>
       </div>
       <div className="nav-section-label">WORKSPACE</div>
       <nav className="primary-nav">
         {([
-          ["Overview","▦"],["Branches","⑂"],["State","◇"],["Event log","≡"],["Settings","⚙"]
-        ] as [Tab,string][]).map(([item,icon]) => <button key={item} className={tab===item?"nav-link active":"nav-link"} onClick={()=>setTab(item)}><span className="nav-icon">{icon}</span><span>{item==="State"?"Shared state":item}</span>{item==="Branches"&&openBranches.length>0&&<small>{openBranches.length}</small>}</button>)}
+          {item:"Overview" as Tab, icon:<LayoutDashboard size={17}/>, label:"Overview"},
+          {item:"Branches" as Tab, icon:<GitBranch size={17}/>, label:"Branches"},
+          {item:"State" as Tab, icon:<Database size={17}/>, label:"Shared state"},
+          {item:"Event log" as Tab, icon:<ScrollText size={17}/>, label:"Event log"},
+          {item:"Settings" as Tab, icon:<Settings2 size={17}/>, label:"Settings"}
+        ]).map(({item,icon,label}) => <button key={item} className={tab===item?"nav-link active":"nav-link"} onClick={()=>{setTab(item);setMobileNavOpen(false)}} title={navCollapsed?label:undefined}><span className="nav-icon">{icon}</span><span className="nav-label">{label}</span>{item==="Branches"&&openBranches.length>0&&<small>{openBranches.length}</small>}</button>)}
       </nav>
       <div className="nav-bottom">
         <div className="runtime-status-card">
@@ -184,15 +193,16 @@ export default function CohortDashboard() {
         <button className="profile-control"><div className="profile-avatar">C</div><span><strong>Workspace admin</strong><small>Administrator</small></span><b>···</b></button>
       </div>
     </aside>
+    {mobileNavOpen&&<button className="mobile-nav-backdrop" aria-label="Close navigation" onClick={()=>setMobileNavOpen(false)}/>}
 
     <div className="app-main">
       <header className="topbar">
-        <div className="breadcrumbs"><span>Workspace</span><b>/</b><strong>{tab==="State"?"Shared state":tab}</strong></div>
+        <div className="breadcrumbs"><button className="topbar-icon mobile-nav-trigger" onClick={()=>setMobileNavOpen(!mobileNavOpen)} title="Open navigation"><PanelLeftOpen size={16}/></button><span>Workspace</span><b>/</b><strong>{tab==="State"?"Shared state":tab}</strong></div>
         <div className="topbar-actions">
           <span className={connected?"connection-pill connected":"connection-pill"}><i/>{connected?"Runtime connected":"Runtime offline"}</span>
-          <button className="topbar-icon" onClick={()=>void refresh()} title="Refresh data">↻</button>
-          <button className="topbar-icon" onClick={()=>setDark(!dark)} title="Toggle theme">{dark?"☼":"◐"}</button>
-          <button className="topbar-icon" onClick={()=>setSidebar(!sidebar)} title="Technical inspector">⌘</button>
+          <button className="topbar-icon" onClick={()=>void refresh()} title="Refresh data"><RefreshCw size={15}/></button>
+          <button className="topbar-icon" onClick={()=>setDark(!dark)} title="Toggle theme">{dark?<Sun size={16}/>:<Moon size={16}/>}</button>
+          <button className="topbar-icon" onClick={()=>setSidebar(!sidebar)} title="Technical inspector"><Command size={16}/></button>
         </div>
       </header>
 
@@ -202,7 +212,7 @@ export default function CohortDashboard() {
         {tab==="Overview"&&<>
           <div className="page-heading">
             <div><div className="eyebrow">WORKSPACE / MAIN</div><h1>Workspace overview</h1><p>See how your agents coordinate, share state and resolve competing changes.</p></div>
-            <div className="heading-actions"><span className="updated-label">Updated just now</span><button className="button-primary" onClick={()=>setCreateOpen(true)}>＋ New branch</button></div>
+            <div className="heading-actions"><span className="updated-label">Updated just now</span><button className="button-primary" onClick={()=>setCreateOpen(true)}><span className="button-icon"><Activity size={14}/></span> New branch</button></div>
           </div>
           <div className="health-strip">
             <div className="health-copy"><span className="health-indicator"/><div><strong>{connected?"Coordination runtime is reachable":"Runtime connection required"}</strong><small>{connected?"Workspace data is being read from the live API.":"Start the Cohort API to load live workspace activity."}</small></div></div>
@@ -237,7 +247,7 @@ export default function CohortDashboard() {
         </>}
 
         {tab==="Branches"&&<>
-          <div className="page-heading"><div><div className="eyebrow">WORKSPACE / COORDINATION</div><h1>Branches</h1><p>Isolated workspaces where agents can make changes without overwriting one another.</p></div><button className="button-primary" onClick={()=>setCreateOpen(true)}>＋ Create branch</button></div>
+          <div className="page-heading"><div><div className="eyebrow">WORKSPACE / COORDINATION</div><h1>Branches</h1><p>Isolated workspaces where agents can make changes without overwriting one another.</p></div><button className="button-primary" onClick={()=>setCreateOpen(true)}><span className="button-icon"><GitBranch size={14}/></span> Create branch</button></div>
           <div className="branch-controls"><div className="search-control"><span>⌕</span><input value={filter} onChange={e=>setFilter(e.target.value)} placeholder="Search branches or agents"/></div><div className="segmented-control"><button className={branchStatus==="open"?"active":""} onClick={()=>{setBranchStatus("open");setSelected([])}}>Open <b>{openBranches.length}</b></button><button className={branchStatus==="merged"?"active":""} onClick={()=>{setBranchStatus("merged");setSelected([])}}>Merged</button></div></div>
           <div className="table-toolbar"><span>{visibleBranches.length} branches</span><button className="button-secondary" disabled={!selected.length||busy} onClick={()=>void run(async()=>{for(const id of selected){const b=branches.find(x=>x.id===id);if(b){const result=await api<any>(`/branches/${b.id}/commit`,{method:"POST"});if(result.conflict)throw new Error(`Conflict in ${b.name}: ${result.conflicting_keys.join(", ")}`)}}setSelected([])},"Selected branches merged")}>Merge selected ({selected.length})</button></div>
           <section className="surface-card table-surface"><div className="data-table-wrap"><table className="data-table"><thead><tr><th><input type="checkbox" checked={visibleBranches.length>0&&visibleBranches.every(b=>selected.includes(b.id))} onChange={e=>setSelected(e.target.checked?visibleBranches.filter(b=>!b.conflicting_keys.length).map(b=>b.id):[])}/></th><th>BRANCH</th><th>OWNER</th><th>BASE VERSION</th><th>STATUS</th><th>CREATED</th><th/></tr></thead><tbody>{visibleBranches.map(branch=><tr key={branch.id}><td><input type="checkbox" disabled={branch.conflicting_keys.length>0} checked={selected.includes(branch.id)} onChange={e=>setSelected(prev=>e.target.checked?[...prev,branch.id]:prev.filter(id=>id!==branch.id))}/></td><td><strong>{branch.name}</strong><small>{branch.id.slice(0,8)}</small></td><td>{branch.agent_id}</td><td><code>{short(branch.base_version)}</code></td><td><span className={branch.status==="merged"?"status-tag success":branch.conflicting_keys.length?"status-tag danger":"status-tag neutral"}><i/>{branch.status==="merged"?"Merged":branch.conflicting_keys.length?"Conflict":"Open"}</span></td><td>{timeAgo(branch.created_at)}</td><td>{branch.status==="open"?(branch.conflicting_keys.length?<button className="text-action" onClick={()=>void openResolve(branch)}>Resolve →</button>:<button className="text-action" disabled={busy} onClick={()=>void mergeBranch(branch)}>Merge →</button>):"—"}</td></tr>)}{!visibleBranches.length&&<tr><td colSpan={7}><div className="empty-state"><strong>No branches found</strong><p>Create a branch to give an agent an isolated place to work.</p></div></td></tr>}</tbody></table></div></section>
