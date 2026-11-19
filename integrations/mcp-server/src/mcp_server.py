@@ -9,7 +9,6 @@ import argparse
 import functools
 import json
 import os
-import sqlite3
 import threading
 from pathlib import Path
 from typing import Any
@@ -19,6 +18,7 @@ from mcp.server.fastmcp.exceptions import ToolError
 
 from cerbere_cohort.errors import CerbereError
 from cerbere_cohort.persistence import PersistentWorkspace
+from cerbere_cohort.postgres import PostgresPersistentWorkspace
 from cerbere_cohort.workspace import Branch
 
 
@@ -57,12 +57,18 @@ def structured_tool_errors(fn):
 class CohortService:
     """Thread-safe MCP-facing facade over PersistentWorkspace."""
 
-    def __init__(self, db_path: str | Path):
-        self.db_path = Path(db_path).expanduser()
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
-        self.workspace = PersistentWorkspace(self.db_path)
-        self._db = sqlite3.connect(str(self.db_path), check_same_thread=False)
-        self._db.row_factory = sqlite3.Row
+    def __init__(self, db_path: str | Path | None = None):
+        database_url = os.getenv('DATABASE_URL', '').strip()
+        if database_url.startswith(('postgres://', 'postgresql://')):
+            self.db_path = None
+            self.workspace = PostgresPersistentWorkspace(database_url)
+        else:
+            if db_path is None:
+                raise ValueError('Set DATABASE_URL or provide a local SQLite --db path')
+            self.db_path = Path(db_path).expanduser()
+            self.db_path.parent.mkdir(parents=True, exist_ok=True)
+            self.workspace = PersistentWorkspace(self.db_path)
+        self._db = self.workspace._conn
         self._lock = threading.RLock()
         self._db.execute(
             """
@@ -238,7 +244,6 @@ class CohortService:
     def close(self) -> None:
         with self._lock:
             self.workspace.close()
-            self._db.close()
 
 
 def create_server(service: CohortService, host: str = "127.0.0.1", port: int = 8765) -> FastMCP:
