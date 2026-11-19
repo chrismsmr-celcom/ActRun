@@ -7,13 +7,13 @@ def test_begin_immediate_becomes_transaction():
 
 def test_sqlite_placeholders_and_rowid_are_translated():
     sql = "SELECT * FROM events WHERE agent_id = ? ORDER BY rowid"
-    assert _Connection._translate(sql) == "SELECT * FROM events WHERE agent_id = %s ORDER BY seq"
+    assert _Connection._translate(sql) == "SELECT * FROM cohort_events WHERE agent_id = %s ORDER BY seq"
 
 
 def test_insert_or_ignore_is_translated_to_postgres_upsert():
     sql = "INSERT OR IGNORE INTO objects (hash, content) VALUES (?, ?)"
     translated = _Connection._translate(sql)
-    assert translated.startswith("INSERT INTO objects")
+    assert translated.startswith("INSERT INTO cohort_objects")
     assert "ON CONFLICT DO NOTHING" in translated
     assert "%s" in translated
 
