@@ -55,7 +55,7 @@ export default function CohortDashboard() {
   const [replayIndex, setReplayIndex] = useState(0);
   const [resolveBranch, setResolveBranch] = useState<Branch | null>(null);
   const [strategy, setStrategy] = useState("PreferHead");
-  const [rationale, setRationale] = useState("");
+  const [rationale, setRationale] = useState("");\n  const [agentPriority, setAgentPriority] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
   const [agentId, setAgentId] = useState("agent-new");
   const [branchName, setBranchName] = useState("");
@@ -125,8 +125,8 @@ export default function CohortDashboard() {
   const resolve = async () => {
     if (!resolveBranch || !rationale.trim()) return;
     await run(async () => {
-      await api(`/branches/${resolveBranch.id}/resolve`, { method: "POST", body: JSON.stringify({ strategy, rationale }) });
-      setResolveBranch(null); setRationale("");
+      await api(`/branches/${resolveBranch.id}/resolve`, { method: "POST", body: JSON.stringify({ strategy, rationale, priority: agentPriority.split(",").map((x) => x.trim()).filter(Boolean) }) });
+      setResolveBranch(null); setRationale(""); setAgentPriority("");
     }, "Resolution recorded and branch committed");
   };
   const acquireLease = () => {
@@ -237,7 +237,7 @@ export default function CohortDashboard() {
       </main>
     </div>
     {createOpen && <div className="modal-backdrop" onClick={() => setCreateOpen(false)}><div className="modal-card" onClick={(e) => e.stopPropagation()}><div className="modal-head"><h2>Create branch</h2><button className="icon-btn" onClick={() => setCreateOpen(false)}>×</button></div><label className="field-label">Agent ID<input value={agentId} onChange={(e) => setAgentId(e.target.value)} placeholder="agent-backend"/></label><label className="field-label">Branch name<input value={branchName} onChange={(e) => setBranchName(e.target.value)} placeholder="implement-api"/></label><div className="modal-actions"><button className="small-button" onClick={() => setCreateOpen(false)}>Cancel</button><button className="primary-btn" disabled={busy || !agentId.trim() || !branchName.trim()} onClick={() => void createBranch()}>Create branch</button></div></div></div>}
-    {resolveBranch && <div className="modal-backdrop" onClick={() => setResolveBranch(null)}><div className="modal-card" onClick={(e) => e.stopPropagation()}><div className="modal-head"><h2>Resolve {resolveBranch.name}</h2><button className="icon-btn" onClick={() => setResolveBranch(null)}>×</button></div><p className="page-intro">Conflicting keys: {resolveBranch.conflicting_keys.join(", ")}</p><label className="field-label">Resolution strategy<select value={strategy} onChange={(e) => setStrategy(e.target.value)}><option>PreferHead</option><option>PreferBranch</option><option>PreferAgent</option></select></label><label className="field-label">Rationale<textarea rows={3} value={rationale} onChange={(e) => setRationale(e.target.value)} placeholder="Explain why this side should be retained."/></label><p className="warning-copy">The selected resolver decides conflicting values. Review the result in your application; Cohort cannot verify semantic correctness.</p><div className="modal-actions"><button className="small-button" onClick={() => setResolveBranch(null)}>Cancel</button><button className="primary-btn" disabled={busy || !rationale.trim()} onClick={() => void resolve()}>Record decision</button></div></div></div>}
+    {resolveBranch && <div className="modal-backdrop" onClick={() => setResolveBranch(null)}><div className="modal-card" onClick={(e) => e.stopPropagation()}><div className="modal-head"><h2>Resolve {resolveBranch.name}</h2><button className="icon-btn" onClick={() => setResolveBranch(null)}>×</button></div><p className="page-intro">Conflicting keys: {resolveBranch.conflicting_keys.join(", ")}</p><label className="field-label">Resolution strategy<select value={strategy} onChange={(e) => setStrategy(e.target.value)}><option>PreferHead</option><option>PreferBranch</option><option>PreferAgent</option></select></label>{strategy === "PreferAgent" && <label className="field-label">Agent priority (comma-separated)<input value={agentPriority} onChange={(e) => setAgentPriority(e.target.value)} placeholder="agent-backend, agent-frontend"/></label>}<label className="field-label">Rationale<textarea rows={3} value={rationale} onChange={(e) => setRationale(e.target.value)} placeholder="Explain why this side should be retained."/></label><p className="warning-copy">The selected resolver decides conflicting values. Review the result in your application; Cohort cannot verify semantic correctness.</p><div className="modal-actions"><button className="small-button" onClick={() => setResolveBranch(null)}>Cancel</button><button className="primary-btn" disabled={busy || !rationale.trim()} onClick={() => void resolve()}>Record decision</button></div></div></div>}
     {notice && <div className="toast">{notice}</div>}
   </div>;
 }
