@@ -193,6 +193,7 @@ export default function CohortDashboard() {
         <button className="profile-control"><div className="profile-avatar">C</div><span><strong>Workspace admin</strong><small>Administrator</small></span><b>···</b></button>
       </div>
     </aside>
+    {mobileNavOpen&&<button className="mobile-nav-backdrop" aria-label="Close navigation" onClick={()=>setMobileNavOpen(false)}/>}
 
     <div className="app-main">
       <header className="topbar">
