@@ -85,7 +85,7 @@ class _Connection:
         # Apply this mapping to reads, writes, indexes, and branch storage.
         namespaced = {
             "objects": "cohort_objects",
-            "events": "cohort_events",
+            "events": "public.cohort_events",
             "leases": "cohort_leases",
             "metadata": "cohort_metadata",
             "lease_counters": "cohort_lease_counters",
