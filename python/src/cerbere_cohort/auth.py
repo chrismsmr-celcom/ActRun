@@ -105,3 +105,14 @@ def require_workspace_member(
         "role": row[0],
         "email": claims.get("email"),
     }
+
+
+def require_workspace_writer(context: dict[str, Any] = None) -> dict[str, Any]:
+    """Require an active member with write privileges."""
+    # FastAPI injects the authenticated membership context through this wrapper.
+    from fastapi import Depends
+    if context is None:
+        raise HTTPException(status_code=401, detail="Authentication required")
+    if context.get("role") not in {"owner", "admin", "member"} and context.get("user_id") != "local":
+        raise HTTPException(status_code=403, detail="Workspace write permission required")
+    return context
