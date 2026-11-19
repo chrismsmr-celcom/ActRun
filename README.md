@@ -14,7 +14,7 @@ Give agents isolated working branches, merge their changes without silently over
 
 </div>
 
-> **Experimental software — not production-ready.** The Python coordination core has automated tests for branching, conflict detection, resolution, replay, leases, and SQLite persistence. The MCP integration and Rust trace analyzer remain prototypes. APIs and event formats may change.
+> **Early beta — not yet a distributed, multi-tenant production service.** The repository now includes a FastAPI service, PostgreSQL persistence, Supabase JWT authentication, persisted REST branch working copies, and a branch diff preview. The hosted API is deliberately single-organization and single-instance. MCP uses a separate branch registry and is limited to stdio when `DATABASE_URL` is configured. The Rust trace analyzer remains a prototype. APIs and event formats may change.
 
 ---
 
@@ -225,7 +225,7 @@ python -m pip install -e .
 cerbere-cohort-mcp
 ```
 
-The server currently keeps its workspace and branch registry in process memory. It is an early integration and has not been established as a durable, multi-user MCP service. Review the implementation and test it with your MCP client before relying on it.
+The MCP server persists its workspace through SQLite or PostgreSQL and stores its own working branches in an `mcp_branches` table. **Those branches are separate from the REST API's `api_branches`; a branch created through REST is not visible to MCP and vice versa.** When `DATABASE_URL` is set, remote Streamable HTTP is deliberately rejected because authenticated remote MCP transport is not implemented. Use stdio for local MCP clients only. Do not expose this server publicly or treat it as a multi-user MCP service.
 
 ## Architecture
 
@@ -240,7 +240,7 @@ flowchart TD
     WS --> LEASE["Lease manager and wait-for graph"]
     WS --> LOG["Structured event log"]
     WS --> STORE["Content store and snapshots"]
-    STORE --> DB["SQLite persistence (optional)"]
+    STORE --> DB["SQLite or PostgreSQL persistence"]
     LOG --> JSONL["JSONL export"]
     JSONL -. "interoperability work remaining" .-> RUST["Rust trace analyzer"]
 ```
@@ -288,7 +288,7 @@ See [docs/CONCEPTS.md](docs/CONCEPTS.md) for the intended semantics and open des
 
 ## Security and data handling
 
-cerbere-cohort is not a security boundary. It does not authenticate agents, enforce tenant isolation, authorize tool access, or sandbox code.
+The hosted REST API authenticates human users with Supabase JWTs and checks their active membership in the configured organization. This is a single-organization deployment boundary, not general multi-tenant isolation. Cohort does not authenticate individual agents, authorize their external tool calls, or sandbox code. The local SQLite development mode intentionally bypasses API authentication and must not be exposed to the public internet.
 
 Event payloads and stored values may contain application data. Do not place credentials, secrets, or sensitive production data in the workspace or event log unless your application applies appropriate redaction, access controls, and retention policies.
 
