@@ -24,6 +24,17 @@ _MEMBERSHIP_TTL = float(os.getenv("COHORT_MEMBERSHIP_CACHE_SECONDS", "30"))
 _membership_cache: dict[tuple[str, str], tuple[float, str]] = {}
 _membership_lock = threading.Lock()
 
+# Reuse the runtime's managed database connection. Opening a new PostgreSQL
+# connection for every dashboard request creates a burst of concurrent
+# connections (the dashboard loads several protected endpoints at once).
+_membership_db = None
+
+
+def configure_membership_db(connection) -> None:
+    """Use the runtime's thread-safe database adapter for membership checks."""
+    global _membership_db
+    _membership_db = connection
+
 
 def _cached_role(org: str, user: str) -> str | None:
     with _membership_lock:
@@ -116,14 +127,16 @@ def require_workspace_member(
     role = _cached_role(requested_org, user_id)
     if role is None:
         try:
-            import psycopg
-            with psycopg.connect(_required_env("DATABASE_URL"), connect_timeout=5, prepare_threshold=None) as conn:
-                row = conn.execute(
-                    """SELECT role FROM public.cohort_memberships
-                       WHERE organization_id = %s AND user_id = %s AND status = 'active'""",
-                    (requested_org, user_id),
-                ).fetchone()
+            if _membership_db is None:
+                raise RuntimeError("Membership database connection has not been configured")
+            row = _membership_db.execute(
+                """SELECT role FROM public.cohort_memberships
+                   WHERE organization_id = ? AND user_id = ? AND status = 'active'""",
+                (requested_org, user_id),
+            ).fetchone()
         except Exception as exc:
+            # Keep credentials and database details out of the HTTP response.
+            # The original exception remains available in the server traceback.
             raise HTTPException(status_code=503, detail="Unable to verify organization membership") from exc
         if not row:
             raise HTTPException(status_code=403, detail="User is not an active member of this organization")
