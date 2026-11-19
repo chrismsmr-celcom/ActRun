@@ -7,7 +7,7 @@ def test_begin_immediate_becomes_transaction():
 
 def test_sqlite_placeholders_and_rowid_are_translated():
     sql = "SELECT * FROM events WHERE agent_id = ? ORDER BY rowid"
-    assert _Connection._translate(sql) == "SELECT * FROM cohort_events WHERE agent_id = %s ORDER BY seq"
+    assert _Connection._translate(sql) == "SELECT * FROM public.cohort_events WHERE agent_id = %s ORDER BY seq"
 
 
 def test_insert_or_ignore_is_translated_to_postgres_upsert():
@@ -39,7 +39,7 @@ def test_postgres_tables_are_namespaced_to_avoid_shared_database_collisions():
         "CREATE INDEX IF NOT EXISTS idx_events_action ON events(action)"
     )
     assert "cohort_idx_events_action" in sql
-    assert "ON cohort_events(action)" in sql
+    assert "ON public.cohort_events(action)" in sql
 
 
 def test_api_branch_table_is_namespaced():
