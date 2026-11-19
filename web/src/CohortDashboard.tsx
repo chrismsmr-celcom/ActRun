@@ -7,7 +7,8 @@ type Branch = { id: string; name: string; agent_id: string; base_version: string
 type StateItem = { key: string; value_hash: string; value: unknown };
 type Lease = { key: string; agent_id: string; expires_at: number; acquired_at: number; fencing_token: number };
 type Overview = { head: string; key_count: number; snapshot_count: number; event_count: number; active_lease_count: number; commit_count: number; conflict_count: number; branches: number; sample_data: boolean };
-type Settings = { require_leases: boolean; persistence: string; database_path: string; multi_process: boolean; authentication: boolean };\ntype ConflictDetail = { key: string; base: unknown; head: unknown; branch: unknown; base_present: boolean; head_present: boolean; branch_present: boolean };
+type Settings = { require_leases: boolean; persistence: string; database_path: string; multi_process: boolean; authentication: boolean };
+type ConflictDetail = { key: string; base: unknown; head: unknown; branch: unknown; base_present: boolean; head_present: boolean; branch_present: boolean };
 
 const API = (import.meta as any).env?.VITE_API_URL || "";
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
