@@ -101,7 +101,7 @@ def health():
 def overview():
     events = workspace.get_events()
     leases = workspace._workspace._lease_manager.get_active_leases()
-    successful = sum(e.action == "coordination.commit" for e in events)
+    successful = sum(e.action == "workspace.commit" for e in events)
     conflicts = sum(e.action == "coordination.conflict" for e in events)
     return {
         "head": workspace.head.version_id,
