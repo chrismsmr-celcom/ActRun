@@ -31,3 +31,19 @@ def test_row_factory_handles_commands_without_result_columns():
 
     make_row = _row_factory(CommandCursor())
     assert make_row(()) == ()
+
+
+
+def test_postgres_tables_are_namespaced_to_avoid_shared_database_collisions():
+    sql = _Connection._translate(
+        "CREATE INDEX IF NOT EXISTS idx_events_action ON events(action)"
+    )
+    assert "cohort_idx_events_action" in sql
+    assert "ON cohort_events(action)" in sql
+
+
+def test_api_branch_table_is_namespaced():
+    sql = _Connection._translate(
+        "SELECT * FROM api_branches WHERE branch_id = ?"
+    )
+    assert sql == "SELECT * FROM cohort_api_branches WHERE branch_id = %s"
