@@ -7,12 +7,40 @@ one customer's token from reading another customer's shared workspace.
 from __future__ import annotations
 
 import os
+import threading
+import time
 from functools import lru_cache
 from typing import Any
 from uuid import UUID
 
 import jwt
 from fastapi import Depends, Header, HTTPException
+
+
+# Membership lookups open a TLS connection to Postgres; the dashboard fires six
+# requests every few seconds, so successful lookups are cached briefly. A revoked
+# member loses access after at most COHORT_MEMBERSHIP_CACHE_SECONDS (default 30).
+_MEMBERSHIP_TTL = float(os.getenv("COHORT_MEMBERSHIP_CACHE_SECONDS", "30"))
+_membership_cache: dict[tuple[str, str], tuple[float, str]] = {}
+_membership_lock = threading.Lock()
+
+
+def _cached_role(org: str, user: str) -> str | None:
+    with _membership_lock:
+        hit = _membership_cache.get((org, user))
+        if hit and hit[0] > time.monotonic():
+            return hit[1]
+        _membership_cache.pop((org, user), None)
+    return None
+
+
+def _remember_role(org: str, user: str, role: str) -> None:
+    if _MEMBERSHIP_TTL <= 0:
+        return
+    with _membership_lock:
+        if len(_membership_cache) > 1024:
+            _membership_cache.clear()
+        _membership_cache[(org, user)] = (time.monotonic() + _MEMBERSHIP_TTL, role)
 
 
 def _required_env(name: str) -> str:
@@ -85,24 +113,27 @@ def require_workspace_member(
     claims = _decode_access_token(authorization[7:].strip())
     user_id = str(UUID(str(claims["sub"])))
 
-    try:
-        import psycopg
-        with psycopg.connect(_required_env("DATABASE_URL"), connect_timeout=5) as conn:
-            row = conn.execute(
-                """SELECT role FROM public.cohort_memberships
-                   WHERE organization_id = %s AND user_id = %s AND status = 'active'""",
-                (requested_org, user_id),
-            ).fetchone()
-    except Exception as exc:
-        raise HTTPException(status_code=503, detail="Unable to verify organization membership") from exc
-
-    if not row:
-        raise HTTPException(status_code=403, detail="User is not an active member of this organization")
+    role = _cached_role(requested_org, user_id)
+    if role is None:
+        try:
+            import psycopg
+            with psycopg.connect(_required_env("DATABASE_URL"), connect_timeout=5, prepare_threshold=None) as conn:
+                row = conn.execute(
+                    """SELECT role FROM public.cohort_memberships
+                       WHERE organization_id = %s AND user_id = %s AND status = 'active'""",
+                    (requested_org, user_id),
+                ).fetchone()
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail="Unable to verify organization membership") from exc
+        if not row:
+            raise HTTPException(status_code=403, detail="User is not an active member of this organization")
+        role = row[0]
+        _remember_role(requested_org, user_id, role)
 
     return {
         "user_id": user_id,
         "organization_id": requested_org,
-        "role": row[0],
+        "role": role,
         "email": claims.get("email"),
     }
 

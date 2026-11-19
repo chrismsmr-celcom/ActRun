@@ -6,6 +6,7 @@ are implemented, deploy this API as a single instance.
 """
 from __future__ import annotations
 
+import datetime
 import json
 import os
 import threading
@@ -15,7 +16,7 @@ from typing import Any, Literal
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from cerbere_cohort.workspace import Branch
 from cerbere_cohort.auth import require_workspace_member, require_workspace_writer
 
@@ -36,6 +37,11 @@ if DATABASE_URL and not DATABASE_URL.startswith(("postgres://", "postgresql://")
     raise RuntimeError("DATABASE_URL must be a PostgreSQL connection URL")
 if DATABASE_URL and (not os.getenv("SUPABASE_URL") or not os.getenv("COHORT_ORGANIZATION_ID")):
     raise RuntimeError("SUPABASE_URL and COHORT_ORGANIZATION_ID are required in production")
+# Fail closed: without DATABASE_URL the API runs in the unauthenticated local
+# development mode. Never let a hosted deployment fall into it by accident.
+_HOSTED = bool(os.getenv("RENDER") or os.getenv("COHORT_ENV", "").lower() == "production")
+if _HOSTED and not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL is required on hosted deployments; refusing to start without authentication")
 if not DATABASE_URL:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 workspace = (
@@ -91,6 +97,9 @@ app.add_middleware(
 )
 
 
+MAX_VALUE_BYTES = 256 * 1024
+
+
 class BranchCreate(BaseModel):
     agent_id: str = Field(min_length=1, max_length=120)
     name: str = Field(min_length=1, max_length=120)
@@ -99,7 +108,14 @@ class BranchCreate(BaseModel):
 class BranchWrite(BaseModel):
     key: str = Field(min_length=1, max_length=500)
     value: Any
-    intent: str | None = None
+    intent: str | None = Field(default=None, max_length=2000)
+
+    @field_validator("value")
+    @classmethod
+    def _bounded_value(cls, value: Any) -> Any:
+        if len(json.dumps(value, ensure_ascii=False, default=str)) > MAX_VALUE_BYTES:
+            raise ValueError(f"value exceeds {MAX_VALUE_BYTES} bytes")
+        return value
 
 
 class LeaseRequest(BaseModel):
@@ -181,7 +197,7 @@ def create_branch(body: BranchCreate):
             "agent_id": body.agent_id,
             "status": "open",
             "conflicting_keys": [],
-            "created_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
+            "created_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         }
         _save_api_branch(branch_id, _branches[branch_id])
     return _branch_summary(branch_id, _branches[branch_id])

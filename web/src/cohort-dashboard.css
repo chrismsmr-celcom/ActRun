@@ -10,7 +10,7 @@
 
 
 /* Cohort visual system — brand-led, quiet and operational. */
-@import url('https://fonts.googleapis.com/css2?family=Courier+Prime:wght@400;700&family=DM+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+
 :root{
   --bg:#f7f7f5;--panel:#fff;--panel-alt:#fbfbfa;--surface:#f0f0ed;--line:#e6e5e1;--line-strong:#d7d6d0;
   --ink:#17181b;--muted:#707177;--faint:#9a9ba0;

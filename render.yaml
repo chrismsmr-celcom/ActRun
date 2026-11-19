@@ -2,6 +2,7 @@ services:
   - type: web
     name: cohort-api
     runtime: python
+    # NOTE: the free plan sleeps after ~15 min idle (30-60 s cold start). Use `starter` for beta testers.
     plan: free
     rootDir: python
     buildCommand: pip install ".[postgres]"
@@ -12,5 +13,11 @@ services:
         sync: false
       - key: COHORT_CORS_ORIGINS
         sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: COHORT_ORGANIZATION_ID
+        sync: false
+      - key: COHORT_ENV
+        value: production
       - key: COHORT_REQUIRE_LEASES
         value: "false"

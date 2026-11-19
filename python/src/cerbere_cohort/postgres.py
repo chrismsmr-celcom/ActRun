@@ -28,14 +28,38 @@ def _row_factory(cursor):
 
 
 class _Connection:
-    """Translate the small SQLite SQL subset used by PersistentWorkspace."""
+    """Translate the small SQLite SQL subset used by PersistentWorkspace.
+
+    Supabase/Render drop idle connections. A single long-lived connection would
+    leave the API returning 500s until restart, so statements issued outside a
+    transaction transparently reconnect (once) and retry.
+    """
     def __init__(self, dsn: str):
         try:
             import psycopg
         except ImportError as exc:
             raise RuntimeError("Install psycopg[binary]>=3.2 for PostgreSQL support") from exc
-        self._db = psycopg.connect(dsn, row_factory=_row_factory, connect_timeout=15, autocommit=True)
+        self._psycopg = psycopg
+        self._dsn = dsn
         self._lock = threading.RLock()
+        self._in_txn = False
+        self._db = self._connect()
+
+    def _connect(self):
+        # prepare_threshold=None keeps the connection compatible with PgBouncer
+        # (Supabase pooler); TCP keepalives detect dead peers early.
+        return self._psycopg.connect(
+            self._dsn, row_factory=_row_factory, connect_timeout=15, autocommit=True,
+            prepare_threshold=None, keepalives=1, keepalives_idle=30,
+            keepalives_interval=10, keepalives_count=3,
+        )
+
+    def _reconnect(self):
+        try:
+            self._db.close()
+        except Exception:
+            pass
+        self._db = self._connect()
 
     @staticmethod
     def _translate(sql: str) -> str:
@@ -79,20 +103,42 @@ class _Connection:
             statement += " ON CONFLICT DO NOTHING"
         return statement.replace("?", "%s")
 
+    def _run(self, sql: str, params):
+        cursor = self._db.execute(self._translate(sql), params)
+        if sql.strip().upper() == "BEGIN IMMEDIATE":
+            self._in_txn = True
+            self._db.execute("SELECT pg_advisory_xact_lock(hashtext('cerbere-cohort-runtime'))")
+        return cursor
+
     def execute(self, sql: str, params=()):
         with self._lock:
-            cursor = self._db.execute(self._translate(sql), params)
-            if sql.strip().upper() == "BEGIN IMMEDIATE":
-                self._db.execute("SELECT pg_advisory_xact_lock(hashtext('cerbere-cohort-runtime'))")
-            return cursor
+            if not self._in_txn and (self._db.closed or getattr(self._db, "broken", False)):
+                self._reconnect()
+            try:
+                return self._run(sql, params)
+            except (self._psycopg.OperationalError, self._psycopg.InterfaceError):
+                if self._in_txn:
+                    # Connection lost mid-transaction: the caller must roll back
+                    # and retry; replaying a partial transaction is unsafe.
+                    raise
+                self._reconnect()
+                return self._run(sql, params)
 
     def commit(self):
         with self._lock:
-            self._db.commit()
+            try:
+                self._db.commit()
+            finally:
+                self._in_txn = False
 
     def rollback(self):
         with self._lock:
-            self._db.rollback()
+            try:
+                self._db.rollback()
+            except (self._psycopg.OperationalError, self._psycopg.InterfaceError):
+                self._reconnect()  # the server already discarded the transaction
+            finally:
+                self._in_txn = False
 
     def close(self):
         self._db.close()

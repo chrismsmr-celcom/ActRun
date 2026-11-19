@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
-import { Activity, ChevronDown, Command, Database, GitBranch, LayoutDashboard, Moon, PanelLeftClose, PanelLeftOpen, RefreshCw, ScrollText, Settings2, Sun } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Activity, Command, Database, GitBranch, LayoutDashboard, LogOut, MessageSquare, Moon, PanelLeftClose, PanelLeftOpen, RefreshCw, ScrollText, Settings2, Sun } from "lucide-react";
 import cohortLogo from "./cohortLogo";
 import "./cohort-dashboard.css";
+import "./beta.css";
 import { organizationId, supabase } from "./auth";
 
 type Tab = "Overview" | "Branches" | "State" | "Event log" | "Settings";
@@ -24,17 +25,28 @@ async function api<T>(path: string, init?: RequestInit): Promise<T> {
     const { data } = await supabase.auth.getSession();
     if (data.session?.access_token) headers.Authorization = `Bearer ${data.session.access_token}`;
   }
-  const response = await fetch(`${API}/api${path}`, {
-    ...init,
-    headers,
-  });
+  const controller = new AbortController();
+  const timer = window.setTimeout(() => controller.abort(), 15000);
+  let response: Response;
+  try {
+    response = await fetch(`${API}/api${path}`, { ...init, headers, signal: controller.signal });
+  } catch (err) {
+    throw new Error(err instanceof DOMException && err.name === "AbortError" ? "The API took too long to respond. It may be waking up — retry in a few seconds." : "Unable to reach the Cohort API.");
+  } finally {
+    window.clearTimeout(timer);
+  }
   const body = await response.json().catch(() => ({}));
+  if (response.status === 401 && supabase) {
+    await supabase.auth.signOut();
+    throw new Error("Your session has expired. Please sign in again.");
+  }
   if (!response.ok) {
     const detail = body?.detail;
     throw new Error(typeof detail === "string" ? detail : detail?.message || JSON.stringify(detail || body));
   }
   return body as T;
 }
+const FEEDBACK_URL = ((import.meta as any).env?.VITE_FEEDBACK_URL as string | undefined) || "";
 const short = (value?: string) => value ? value.slice(0, 7) + "…" + value.slice(-4) : "—";
 const timeAgo = (value: string) => {
   const seconds = Math.max(0, Math.floor((Date.now() - new Date(value).getTime()) / 1000));
@@ -45,11 +57,10 @@ const timeAgo = (value: string) => {
 };
 const dateTime = (seconds: number) => new Date(seconds * 1000).toLocaleTimeString();
 
-export default function CohortDashboard() {
+export default function CohortDashboard({ userEmail, onSignOut }: { userEmail?: string; onSignOut?: () => void }) {
   const [tab, setTab] = useState<Tab>("Overview");
   const [sub, setSub] = useState<"Coordination" | "Conflicts">("Coordination");
   const [dark, setDark] = useState(() => localStorage.getItem("cohort-theme") === "dark");
-  const [banner, setBanner] = useState(true);
   const [sidebar, setSidebar] = useState(false);
   const [navCollapsed, setNavCollapsed] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -79,13 +90,20 @@ export default function CohortDashboard() {
   const [leaseKey, setLeaseKey] = useState("");
   const [trace, setTrace] = useState<{ actions: Record<string, number>; bad: number } | null>(null);
   const [traceText, setTraceText] = useState("");
-  const [deadlock, setDeadlock] = useState(false);
+  const [lastUpdated, setLastUpdated] = useState<number | null>(null);
+  const [writeBranch, setWriteBranch] = useState<Branch | null>(null);
+  const [writeKey, setWriteKey] = useState("");
+  const [writeValue, setWriteValue] = useState("");
+  const [writeIntent, setWriteIntent] = useState("");
+  const inFlight = useRef(false);
 
   const notify = (message: string) => {
     setNotice(message);
     window.setTimeout(() => setNotice(""), 3000);
   };
   const refresh = useCallback(async () => {
+    if (inFlight.current) return;
+    inFlight.current = true;
     try {
       const [o, b, s, e, l, cfg] = await Promise.all([
         api<Overview>("/overview"), api<{ items: Branch[] }>("/branches"),
@@ -93,14 +111,29 @@ export default function CohortDashboard() {
         api<{ items: Lease[] }>("/leases"), api<Settings>("/settings"),
       ]);
       setOverview(o); setBranches(b.items); setState(s); setEvents(e.items);
-      setLeases(l.items); setSettings(cfg); setConnected(true); setError("");
-      
+      setLeases(l.items); setSettings(cfg); setConnected(true); setError(""); setLastUpdated(Date.now());
       setReplayIndex((current) => Math.min(current, Math.max(0, e.items.length - 1)));
     } catch (err) {
       setConnected(false); setError(err instanceof Error ? err.message : "Unable to reach Cohort API");
+    } finally {
+      inFlight.current = false;
     }
   }, []);
-  useEffect(() => { void refresh(); const id = window.setInterval(() => void refresh(), 5000); return () => window.clearInterval(id); }, [refresh]);
+  useEffect(() => {
+    void refresh();
+    const tick = () => { if (!document.hidden) void refresh(); };
+    const id = window.setInterval(tick, 5000);
+    document.addEventListener("visibilitychange", tick);
+    return () => { window.clearInterval(id); document.removeEventListener("visibilitychange", tick); };
+  }, [refresh]);
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      setCreateOpen(false); setResolveBranch(null); setWriteBranch(null); setSidebar(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
   useEffect(() => { document.documentElement.dataset.theme = dark ? "dark" : "light"; localStorage.setItem("cohort-theme", dark ? "dark" : "light"); }, [dark]);
 
   const run = async (action: () => Promise<unknown>, message: string) => {
@@ -112,6 +145,7 @@ export default function CohortDashboard() {
   const openBranches = branches.filter((b) => b.status === "open");
   const visibleBranches = branches.filter((b) => (branchStatus === "open" ? b.status === "open" : b.status === "merged") &&
     (b.name + " " + b.agent_id).toLowerCase().includes(filter.toLowerCase()));
+  const selectable = visibleBranches.filter((b) => b.status === "open" && b.conflicting_keys.length === 0);
   const conflicts = branches.filter((b) => b.status === "open" && b.conflicting_keys.length > 0);
   const actionCounts = useMemo(() => {
     const days = Array.from({ length: 14 }, (_, i) => {
@@ -155,6 +189,18 @@ export default function CohortDashboard() {
       setResolveBranch(null); setRationale(""); setAgentPriority("");
     }, "Resolution recorded and branch committed");
   };
+  const openWrite = (branch: Branch) => { setWriteBranch(branch); setWriteKey(""); setWriteValue(""); setWriteIntent(""); };
+  const writeState = async () => {
+    if (!writeBranch || !writeKey.trim()) return;
+    let value: unknown;
+    try { value = JSON.parse(writeValue); }
+    catch { notify('Value must be valid JSON, e.g. "text", 42 or {"a": 1}'); return; }
+    const target = writeBranch;
+    await run(async () => {
+      await api(`/branches/${target.id}/state`, { method: "PUT", body: JSON.stringify({ key: writeKey.trim(), value, intent: writeIntent.trim() || null }) });
+      setWriteBranch(null);
+    }, "Value written to branch");
+  };
   const acquireLease = () => {
     if (!leaseKey.trim() || !leaseAgent.trim()) return;
     void run(async () => { await api("/leases", { method: "POST", body: JSON.stringify({ agent_id: leaseAgent, key: leaseKey, duration_seconds: 60 }) }); setLeaseKey(""); }, "Lease acquired");
@@ -176,13 +222,12 @@ export default function CohortDashboard() {
     <aside className="app-nav">
       <div className="brand-lockup">
         <img className="brand-logo" src={cohortLogo} alt="Cohort" />
-        <div className="brand-wordmark"><strong>cohort</strong><small>BY CERBERE</small></div>
+        <div className="brand-wordmark"><strong>cohort<span className="beta-tag">BETA</span></strong><small>BY CERBERE</small></div>
         <button className="nav-collapse-button" onClick={()=>{if(window.matchMedia("(max-width: 720px)").matches)setMobileNavOpen(!mobileNavOpen);else setNavCollapsed(!navCollapsed)}} title={navCollapsed ? "Expand navigation" : "Collapse navigation"} aria-label={navCollapsed ? "Expand navigation" : "Collapse navigation"}>{navCollapsed?<PanelLeftOpen size={16}/>:<PanelLeftClose size={16}/>}</button>
       </div>
       <div className="workspace-picker">
         <div className="workspace-avatar">W</div>
         <div className="workspace-meta"><strong>Workspace</strong><small>main environment</small></div>
-        <ChevronDown className="nav-chevron" size={15}/>
       </div>
       <div className="nav-section-label">WORKSPACE</div>
       <nav className="primary-nav">
@@ -200,7 +245,8 @@ export default function CohortDashboard() {
           <p>{connected?"Connected to Cohort API":"Waiting for runtime connection"}</p>
           <button onClick={()=>void refresh()}>{connected?"Refresh status":"Retry connection"} <span>↗</span></button>
         </div>
-        <button className="profile-control"><div className="profile-avatar">C</div><span><strong>Workspace admin</strong><small>Administrator</small></span><b>···</b></button>
+        {FEEDBACK_URL&&<a className="feedback-link" href={FEEDBACK_URL} target="_blank" rel="noreferrer"><MessageSquare size={14}/> Send feedback</a>}
+        <div className="profile-control"><div className="profile-avatar">{(userEmail||"L")[0].toUpperCase()}</div><span><strong title={userEmail}>{userEmail||"Local mode"}</strong><small>{userEmail?"Signed in":"Authentication disabled"}</small></span>{onSignOut&&<button className="topbar-icon" onClick={onSignOut} title="Sign out" aria-label="Sign out"><LogOut size={15}/></button>}</div>
       </div>
     </aside>
     {mobileNavOpen&&<button className="mobile-nav-backdrop" aria-label="Close navigation" onClick={()=>setMobileNavOpen(false)}/>}
@@ -222,7 +268,7 @@ export default function CohortDashboard() {
         {tab==="Overview"&&<>
           <div className="page-heading">
             <div><div className="eyebrow">WORKSPACE / MAIN</div><h1>Workspace overview</h1><p>See how your agents coordinate, share state and resolve competing changes.</p></div>
-            <div className="heading-actions"><span className="updated-label">Updated just now</span><button className="button-primary" onClick={()=>setCreateOpen(true)}><span className="button-icon"><Activity size={14}/></span> New branch</button></div>
+            <div className="heading-actions"><span className="updated-label">{lastUpdated?`Updated ${new Date(lastUpdated).toLocaleTimeString()}`:"Loading…"}</span><button className="button-primary" onClick={()=>setCreateOpen(true)}><span className="button-icon"><Activity size={14}/></span> New branch</button></div>
           </div>
           <div className="health-strip">
             <div className="health-copy"><span className="health-indicator"/><div><strong>{connected?"Coordination runtime is reachable":"Runtime connection required"}</strong><small>{connected?"Workspace data is being read from the live API.":"Start the Cohort API to load live workspace activity."}</small></div></div>
@@ -252,7 +298,7 @@ export default function CohortDashboard() {
           </div>
           <section className="surface-card recent-card">
             <div className="surface-heading"><div><h2>Recent activity</h2><p>Latest events recorded by the coordination runtime</p></div><button className="button-secondary compact-button" onClick={()=>setTab("Event log")}>Open event log</button></div>
-            {events.slice(0,6).length?<div className="data-table-wrap"><table className="data-table"><thead><tr><th>EVENT</th><th>AGENT</th><th>EVENT ID</th><th>TIME</th></tr></thead><tbody>{events.slice(0,6).map(event=><tr key={event.event_id}><td><span className="event-name"><i className={/conflict|abort|reject/.test(event.action)?"event-dot danger":/commit|resolve/.test(event.action)?"event-dot success":"event-dot"}/>{event.action}</span></td><td>{event.agent_id}</td><td><code>{short(event.event_id)}</code></td><td>{timeAgo(event.timestamp)}</td></tr>)}</tbody></table></div>:<div className="empty-state"><strong>No activity recorded yet</strong><p>Create a branch or acquire a lease to start recording coordination events.</p></div>}
+            {events.slice(0,6).length?<div className="data-table-wrap"><table className="data-table"><thead><tr><th>EVENT</th><th>AGENT</th><th>EVENT ID</th><th>TIME</th></tr></thead><tbody>{events.slice(0,6).map(event=><tr key={event.event_id}><td><span className="event-name"><i className={/conflict|abort|reject/.test(event.action)?"event-dot danger":/commit|resolve/.test(event.action)?"event-dot success":"event-dot"}/>{event.action}</span></td><td>{event.agent_id}</td><td><code>{short(event.event_id)}</code></td><td>{timeAgo(event.timestamp)}</td></tr>)}</tbody></table></div>:<div className="empty-state"><strong>No activity recorded yet</strong><p>Create a branch, write a value and merge it to see your first coordination events.</p></div>}
           </section>
         </>}
 
@@ -260,16 +306,16 @@ export default function CohortDashboard() {
           <div className="page-heading"><div><div className="eyebrow">WORKSPACE / COORDINATION</div><h1>Branches</h1><p>Isolated workspaces where agents can make changes without overwriting one another.</p></div><button className="button-primary" onClick={()=>setCreateOpen(true)}><span className="button-icon"><GitBranch size={14}/></span> Create branch</button></div>
           <div className="branch-controls"><div className="search-control"><span>⌕</span><input value={filter} onChange={e=>setFilter(e.target.value)} placeholder="Search branches or agents"/></div><div className="segmented-control"><button className={branchStatus==="open"?"active":""} onClick={()=>{setBranchStatus("open");setSelected([])}}>Open <b>{openBranches.length}</b></button><button className={branchStatus==="merged"?"active":""} onClick={()=>{setBranchStatus("merged");setSelected([])}}>Merged</button></div></div>
           <div className="table-toolbar"><span>{visibleBranches.length} branches</span><button className="button-secondary" disabled={!selected.length||busy} onClick={()=>void run(async()=>{for(const id of selected){const b=branches.find(x=>x.id===id);if(b){const result=await api<any>(`/branches/${b.id}/commit`,{method:"POST"});if(result.conflict)throw new Error(`Conflict in ${b.name}: ${result.conflicting_keys.join(", ")}`)}}setSelected([])},"Selected branches merged")}>Merge selected ({selected.length})</button></div>
-          <section className="surface-card table-surface"><div className="data-table-wrap"><table className="data-table"><thead><tr><th><input type="checkbox" checked={visibleBranches.length>0&&visibleBranches.every(b=>selected.includes(b.id))} onChange={e=>setSelected(e.target.checked?visibleBranches.filter(b=>!b.conflicting_keys.length).map(b=>b.id):[])}/></th><th>BRANCH</th><th>OWNER</th><th>BASE VERSION</th><th>STATUS</th><th>CREATED</th><th/></tr></thead><tbody>{visibleBranches.map(branch=><tr key={branch.id}><td><input type="checkbox" disabled={branch.conflicting_keys.length>0} checked={selected.includes(branch.id)} onChange={e=>setSelected(prev=>e.target.checked?[...prev,branch.id]:prev.filter(id=>id!==branch.id))}/></td><td><strong>{branch.name}</strong><small>{branch.id.slice(0,8)}</small></td><td>{branch.agent_id}</td><td><code>{short(branch.base_version)}</code></td><td><span className={branch.status==="merged"?"status-tag success":branch.conflicting_keys.length?"status-tag danger":"status-tag neutral"}><i/>{branch.status==="merged"?"Merged":branch.conflicting_keys.length?"Conflict":"Open"}</span></td><td>{timeAgo(branch.created_at)}</td><td>{branch.status==="open"?(branch.conflicting_keys.length?<button className="text-action" onClick={()=>void openResolve(branch)}>Resolve →</button>:<button className="text-action" disabled={busy} onClick={()=>void mergeBranch(branch)}>Merge →</button>):"—"}</td></tr>)}{!visibleBranches.length&&<tr><td colSpan={7}><div className="empty-state"><strong>No branches found</strong><p>Create a branch to give an agent an isolated place to work.</p></div></td></tr>}</tbody></table></div></section>
+          <section className="surface-card table-surface"><div className="data-table-wrap"><table className="data-table"><thead><tr><th><input type="checkbox" aria-label="Select all mergeable branches" disabled={!selectable.length} checked={selectable.length>0&&selectable.every(b=>selected.includes(b.id))} onChange={e=>setSelected(e.target.checked?selectable.map(b=>b.id):[])}/></th><th>BRANCH</th><th>OWNER</th><th>BASE VERSION</th><th>STATUS</th><th>CREATED</th><th/></tr></thead><tbody>{visibleBranches.map(branch=><tr key={branch.id}><td><input type="checkbox" aria-label={`Select ${branch.name}`} disabled={branch.status!=="open"||branch.conflicting_keys.length>0} checked={selected.includes(branch.id)} onChange={e=>setSelected(prev=>e.target.checked?[...prev,branch.id]:prev.filter(id=>id!==branch.id))}/></td><td><strong>{branch.name}</strong><small>{branch.id.slice(0,8)}</small></td><td>{branch.agent_id}</td><td><code>{short(branch.base_version)}</code></td><td><span className={branch.status==="merged"?"status-tag success":branch.conflicting_keys.length?"status-tag danger":"status-tag neutral"}><i/>{branch.status==="merged"?"Merged":branch.conflicting_keys.length?"Conflict":"Open"}</span></td><td>{timeAgo(branch.created_at)}</td><td>{branch.status==="open"?(branch.conflicting_keys.length?<span className="row-actions"><button className="text-action" disabled={busy} onClick={()=>openWrite(branch)}>Write</button><button className="text-action" onClick={()=>void openResolve(branch)}>Resolve →</button></span>:<span className="row-actions"><button className="text-action" disabled={busy} onClick={()=>openWrite(branch)}>Write</button><button className="text-action" disabled={busy} onClick={()=>void mergeBranch(branch)}>Merge →</button></span>):"—"}</td></tr>)}{!visibleBranches.length&&<tr><td colSpan={7}><div className="empty-state"><strong>No branches found</strong><p>Create a branch to give an agent an isolated place to work.</p></div></td></tr>}</tbody></table></div></section>
         </>}
 
         {tab==="State"&&<>
           <div className="page-heading"><div><div className="eyebrow">WORKSPACE / SHARED MEMORY</div><h1>Shared state</h1><p>A content-addressed view of the values agents read and write together.</p></div><span className="state-head-label">HEAD <code>{short(state.head)}</code></span></div>
-          <section className="surface-card"><div className="surface-heading"><div><h2>Workspace keys</h2><p>{state.items.length} keys in the current snapshot</p></div><span className="subtle-tag">CONTENT ADDRESSED</span></div><div className="data-table-wrap"><table className="data-table"><thead><tr><th>KEY</th><th>VALUE HASH</th><th>VALUE PREVIEW</th></tr></thead><tbody>{state.items.map(item=><tr key={item.key}><td><strong className="mono-text">{item.key}</strong></td><td><code>{short(item.value_hash)}</code></td><td><code className="value-preview">{JSON.stringify(item.value)}</code></td></tr>)}{!state.items.length&&<tr><td colSpan={3}><div className="empty-state"><strong>Shared state is empty</strong><p>Seed a workspace through the Cohort runtime before writing branch data.</p></div></td></tr>}</tbody></table></div></section>
+          <section className="surface-card"><div className="surface-heading"><div><h2>Workspace keys</h2><p>{state.items.length} keys in the current snapshot</p></div><span className="subtle-tag">CONTENT ADDRESSED</span></div><div className="data-table-wrap"><table className="data-table"><thead><tr><th>KEY</th><th>VALUE HASH</th><th>VALUE PREVIEW</th></tr></thead><tbody>{state.items.map(item=><tr key={item.key}><td><strong className="mono-text">{item.key}</strong></td><td><code>{short(item.value_hash)}</code></td><td><code className="value-preview">{JSON.stringify(item.value)}</code></td></tr>)}{!state.items.length&&<tr><td colSpan={3}><div className="empty-state"><strong>Shared state is empty</strong><p>Create a branch, use <b>Write</b> to add a key, then merge it. Agents can also write through the API or the MCP server.</p></div></td></tr>}</tbody></table></div></section>
         </>}
 
         {tab==="Event log"&&<>
-          <div className="page-heading"><div><div className="eyebrow">WORKSPACE / AUDIT TRAIL</div><h1>Event log</h1><p>An ordered record of coordination decisions, writes, leases and branch operations.</p></div><button className="button-secondary" onClick={()=>{const blob=new Blob([events.map(e=>JSON.stringify(e)).join("\\n")],{type:"application/x-ndjson"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download="cohort-events.jsonl";a.click();URL.revokeObjectURL(url)}}>↓ Export JSONL</button></div>
+          <div className="page-heading"><div><div className="eyebrow">WORKSPACE / AUDIT TRAIL</div><h1>Event log</h1><p>An ordered record of coordination decisions, writes, leases and branch operations.</p></div><button className="button-secondary" onClick={()=>{const blob=new Blob([events.map(e=>JSON.stringify(e)).join("\n")],{type:"application/x-ndjson"});const url=URL.createObjectURL(blob);const a=document.createElement("a");a.href=url;a.download="cohort-events.jsonl";a.click();URL.revokeObjectURL(url)}}>↓ Export JSONL</button></div>
           <div className="branch-controls"><div className="search-control"><span>⌕</span><input value={filter} onChange={e=>setFilter(e.target.value)} placeholder="Filter by event, agent or ID"/></div><span className="event-total">{events.length} events loaded</span></div>
           <section className="surface-card"><div className="data-table-wrap"><table className="data-table"><thead><tr><th>EVENT</th><th>AGENT</th><th>EVENT ID</th><th>RECORDED AT</th><th/></tr></thead><tbody>{events.filter(e=>(e.action+" "+e.agent_id+" "+e.event_id).toLowerCase().includes(filter.toLowerCase())).map(event=><tr key={event.event_id}><td><span className="event-name"><i className={/conflict|abort|reject/.test(event.action)?"event-dot danger":/commit|resolve/.test(event.action)?"event-dot success":"event-dot"}/>{event.action}</span></td><td>{event.agent_id}</td><td><code>{short(event.event_id)}</code></td><td>{new Date(event.timestamp).toLocaleString()}</td><td><button className="text-action" onClick={()=>{setReplayIndex(events.findIndex(e=>e.event_id===event.event_id));setSidebar(true)}}>Inspect →</button></td></tr>)}</tbody></table></div></section>
         </>}
@@ -285,13 +331,14 @@ export default function CohortDashboard() {
       <details open><summary>Event replay</summary><div className="inspector-body"><input type="range" min="0" max={Math.max(0,events.length-1)} value={replayIndex} onChange={e=>setReplayIndex(Number(e.target.value))}/>{replayEvent?<><div className="inspector-meta"><span>EVENT {replayIndex+1} / {events.length}</span><span>{short(state.head)}</span></div><pre className="code-block">{JSON.stringify(replayEvent,null,2)}</pre></>:<p className="empty-copy">No events recorded.</p>}</div></details>
       <details><summary>Snapshots</summary><div className="inspector-body"><div className="inspector-record"><strong>{short(state.head)}</strong><small>Current HEAD · {state.items.length} keys</small></div>{state.parent&&<div className="inspector-record"><strong>{short(state.parent)}</strong><small>Parent snapshot</small></div>}</div></details>
       <details><summary>Leases</summary><div className="inspector-body">{leases.length?leases.map(lease=><div className="inspector-record" key={lease.key}><strong>{lease.key}</strong><small>{lease.agent_id} · fencing token {lease.fencing_token}</small><button className="button-secondary compact-button" onClick={()=>void releaseLease(lease)}>Release lease</button></div>):<p className="empty-copy">No active leases.</p>}<label className="form-label">Agent ID<input value={leaseAgent} onChange={e=>setLeaseAgent(e.target.value)}/></label><label className="form-label">Resource key<input value={leaseKey} onChange={e=>setLeaseKey(e.target.value)} placeholder="shared/resource"/></label><button className="button-primary full-button" disabled={busy||!leaseKey.trim()} onClick={acquireLease}>Acquire 60s lease</button></div></details>
-      <details><summary>Trace analyzer</summary><div className="inspector-body"><p className="empty-copy">Load an exported JSONL event trace.</p><input type="file" accept=".jsonl,.json,.txt" onChange={e=>{const file=e.target.files?.[0];if(file)void file.text().then(parseTrace)}}/><textarea rows={3} value={traceText} onChange={e=>setTraceText(e.target.value)} placeholder="Paste JSONL events…"/><button className="button-secondary compact-button" onClick={()=>parseTrace(traceText||events.map(e=>JSON.stringify(e)).join("\\n"))}>Analyze events</button>{trace&&Object.entries(trace.actions).map(([action,count])=><div className="inspector-meta" key={action}><span>{action}</span><strong>{count}</strong></div>)}</div></details>
+      <details><summary>Trace analyzer</summary><div className="inspector-body"><p className="empty-copy">Load an exported JSONL event trace.</p><input type="file" accept=".jsonl,.json,.txt" onChange={e=>{const file=e.target.files?.[0];if(file)void file.text().then(parseTrace)}}/><textarea rows={3} value={traceText} onChange={e=>setTraceText(e.target.value)} placeholder="Paste JSONL events…"/><button className="button-secondary compact-button" onClick={()=>parseTrace(traceText||events.map(e=>JSON.stringify(e)).join("\n"))}>Analyze events</button>{trace&&Object.entries(trace.actions).map(([action,count])=><div className="inspector-meta" key={action}><span>{action}</span><strong>{count}</strong></div>)}</div></details>
       <details><summary>MCP and persistence</summary><div className="inspector-body"><div className="inspector-meta"><span>API</span><strong>{connected?"Connected":"Offline"}</strong></div><div className="inspector-meta"><span>Storage</span><strong>{settings?.persistence||"—"}</strong></div><div className="inspector-meta"><span>MCP</span><strong>Local stdio</strong></div><p className="empty-copy">MCP is currently a local stdio integration, not a hosted multi-user service.</p></div></details>
     </aside></div>}
 
-    {createOpen&&<div className="modal-backdrop" onClick={()=>setCreateOpen(false)}><div className="modal-card" onClick={e=>e.stopPropagation()}><div className="modal-head"><div><span className="eyebrow">WORKSPACE / BRANCHES</span><h2>Create branch</h2></div><button className="topbar-icon" onClick={()=>setCreateOpen(false)}>×</button></div><p className="modal-description">Give an agent an isolated branch to work in.</p><label className="form-label">Agent ID<input value={agentId} onChange={e=>setAgentId(e.target.value)} placeholder="agent-backend"/></label><label className="form-label">Branch name<input value={branchName} onChange={e=>setBranchName(e.target.value)} placeholder="implement-api"/></label><div className="modal-actions"><button className="button-secondary" onClick={()=>setCreateOpen(false)}>Cancel</button><button className="button-primary" disabled={busy||!agentId.trim()||!branchName.trim()} onClick={()=>void createBranch()}>Create branch</button></div></div></div>}
-    {resolveBranch&&<div className="modal-backdrop" onClick={()=>setResolveBranch(null)}><div className="modal-card resolve-modal" onClick={e=>e.stopPropagation()}><div className="modal-head"><div><span className="eyebrow">CONFLICT REVIEW</span><h2>Resolve {resolveBranch.name}</h2></div><button className="topbar-icon" onClick={()=>setResolveBranch(null)}>×</button></div><p className="modal-description">Review the competing values before applying a resolution.</p>{conflictDetails.map(detail=><div className="conflict-context" key={detail.key}><strong>{detail.key}</strong><div className="three-way">{([{label:"Base",value:detail.base,present:detail.base_present},{label:"HEAD",value:detail.head,present:detail.head_present},{label:"Branch",value:detail.branch,present:detail.branch_present}]).map(item=><div key={item.label}><span>{item.label}</span><pre>{item.present?JSON.stringify(item.value,null,2):"∅ absent"}</pre></div>)}</div></div>)}<label className="form-label">Resolution strategy<select value={strategy} onChange={e=>setStrategy(e.target.value)}><option>PreferHead</option><option>PreferBranch</option><option>PreferAgent</option></select></label>{strategy==="PreferAgent"&&<label className="form-label">Agent priority<input value={agentPriority} onChange={e=>setAgentPriority(e.target.value)} placeholder="agent-backend, agent-frontend"/></label>}<label className="form-label">Decision rationale<textarea rows={3} value={rationale} onChange={e=>setRationale(e.target.value)} placeholder="Explain why this resolution is appropriate."/></label><div className="security-notice"><strong>Review required</strong><p>The resolver applies a deterministic policy. It cannot determine whether the resulting code is semantically correct.</p></div><div className="modal-actions"><button className="button-secondary" onClick={()=>setResolveBranch(null)}>Cancel</button><button className="button-primary" disabled={busy||!rationale.trim()} onClick={()=>void resolve()}>Record resolution</button></div></div></div>}
-    {notice&&<div className="toast">{notice}</div>}
+    {createOpen&&<div className="modal-backdrop" onClick={()=>setCreateOpen(false)}><div className="modal-card" role="dialog" aria-modal="true" onClick={e=>e.stopPropagation()}><div className="modal-head"><div><span className="eyebrow">WORKSPACE / BRANCHES</span><h2>Create branch</h2></div><button className="topbar-icon" onClick={()=>setCreateOpen(false)}>×</button></div><p className="modal-description">Give an agent an isolated branch to work in.</p><label className="form-label">Agent ID<input value={agentId} onChange={e=>setAgentId(e.target.value)} placeholder="agent-backend"/></label><label className="form-label">Branch name<input value={branchName} onChange={e=>setBranchName(e.target.value)} placeholder="implement-api"/></label><div className="modal-actions"><button className="button-secondary" onClick={()=>setCreateOpen(false)}>Cancel</button><button className="button-primary" disabled={busy||!agentId.trim()||!branchName.trim()} onClick={()=>void createBranch()}>Create branch</button></div></div></div>}
+    {resolveBranch&&<div className="modal-backdrop" onClick={()=>setResolveBranch(null)}><div className="modal-card resolve-modal" role="dialog" aria-modal="true" onClick={e=>e.stopPropagation()}><div className="modal-head"><div><span className="eyebrow">CONFLICT REVIEW</span><h2>Resolve {resolveBranch.name}</h2></div><button className="topbar-icon" onClick={()=>setResolveBranch(null)}>×</button></div><p className="modal-description">Review the competing values before applying a resolution.</p>{conflictDetails.map(detail=><div className="conflict-context" key={detail.key}><strong>{detail.key}</strong><div className="three-way">{([{label:"Base",value:detail.base,present:detail.base_present},{label:"HEAD",value:detail.head,present:detail.head_present},{label:"Branch",value:detail.branch,present:detail.branch_present}]).map(item=><div key={item.label}><span>{item.label}</span><pre>{item.present?JSON.stringify(item.value,null,2):"∅ absent"}</pre></div>)}</div></div>)}<label className="form-label">Resolution strategy<select value={strategy} onChange={e=>setStrategy(e.target.value)}><option>PreferHead</option><option>PreferBranch</option><option>PreferAgent</option></select></label>{strategy==="PreferAgent"&&<label className="form-label">Agent priority<input value={agentPriority} onChange={e=>setAgentPriority(e.target.value)} placeholder="agent-backend, agent-frontend"/></label>}<label className="form-label">Decision rationale<textarea rows={3} value={rationale} onChange={e=>setRationale(e.target.value)} placeholder="Explain why this resolution is appropriate."/></label><div className="security-notice"><strong>Review required</strong><p>The resolver applies a deterministic policy. It cannot determine whether the resulting code is semantically correct.</p></div><div className="modal-actions"><button className="button-secondary" onClick={()=>setResolveBranch(null)}>Cancel</button><button className="button-primary" disabled={busy||!rationale.trim()} onClick={()=>void resolve()}>Record resolution</button></div></div></div>}
+    {writeBranch&&<div className="modal-backdrop" onClick={()=>setWriteBranch(null)}><div className="modal-card" role="dialog" aria-modal="true" onClick={e=>e.stopPropagation()}><div className="modal-head"><div><span className="eyebrow">BRANCH / {writeBranch.name.toUpperCase()}</span><h2>Write a value</h2></div><button className="topbar-icon" aria-label="Close" onClick={()=>setWriteBranch(null)}>×</button></div><p className="modal-description">Changes stay isolated in this branch until it is merged.</p><label className="form-label">Key<input autoFocus value={writeKey} onChange={e=>setWriteKey(e.target.value)} placeholder="config/database"/></label><label className="form-label">Value (JSON)<textarea rows={4} value={writeValue} onChange={e=>setWriteValue(e.target.value)} placeholder='{"host": "db.internal", "pool": 10}'/></label><label className="form-label">Intent (optional)<input value={writeIntent} onChange={e=>setWriteIntent(e.target.value)} placeholder="Why this change is being made"/></label><div className="modal-actions"><button className="button-secondary" onClick={()=>setWriteBranch(null)}>Cancel</button><button className="button-primary" disabled={busy||!writeKey.trim()||!writeValue.trim()} onClick={()=>void writeState()}>Write value</button></div></div></div>}
+    {notice&&<div className="toast" role="status">{notice}</div>}
   </div>;
 }
 
