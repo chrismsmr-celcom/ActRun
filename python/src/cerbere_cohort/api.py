@@ -184,6 +184,56 @@ def list_branches():
         return {"items": [_branch_summary(k, v) for k, v in _branches.items()]}
 
 
+@app.get("/api/branches/{branch_id}/diff", dependencies=[Depends(require_workspace_member)])
+def get_branch_diff(branch_id: str):
+    """Preview every key changed by a branch against its base and current HEAD."""
+    with _lock:
+        item = _branches.get(branch_id)
+        if not item:
+            raise HTTPException(404, "Branch not found")
+        branch = item["branch"]
+        base = workspace._workspace._snapshots.get(branch.base_version)
+        if base is None:
+            raise HTTPException(409, "Branch base snapshot is no longer available")
+
+        base_data = base.data
+        branch_data = branch.current_data
+        head_data = workspace.head.data
+        changed_keys = sorted(
+            key
+            for key in set(base_data) | set(branch_data)
+            if (key in base_data) != (key in branch_data)
+            or base_data.get(key) != branch_data.get(key)
+        )
+        changes = []
+        for key in changed_keys:
+            base_present = key in base_data
+            branch_present = key in branch_data
+            head_present = key in head_data
+            changes.append({
+                "key": key,
+                "base": base_data.get(key),
+                "proposed": branch_data.get(key),
+                "head": head_data.get(key),
+                "base_present": base_present,
+                "proposed_present": branch_present,
+                "head_present": head_present,
+                "head_changed_since_base": (
+                    base_present != head_present
+                    or base_data.get(key) != head_data.get(key)
+                ),
+                "intent": branch.intents.get(key),
+            })
+
+        return {
+            "branch": _branch_summary(branch_id, item),
+            "base_version": base.version_id,
+            "head_version": workspace.head.version_id,
+            "change_count": len(changes),
+            "changes": changes,
+        }
+
+
 @app.post("/api/branches", status_code=201, dependencies=[Depends(require_workspace_writer)])
 def create_branch(body: BranchCreate):
     branch_id = str(uuid.uuid4())
