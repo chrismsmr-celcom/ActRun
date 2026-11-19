@@ -12,7 +12,7 @@ type Overview = { head: string; key_count: number; snapshot_count: number; event
 type Settings = { require_leases: boolean; persistence: string; database_path: string; multi_process: boolean; authentication: boolean };
 type ConflictDetail = { key: string; base: unknown; head: unknown; branch: unknown; base_present: boolean; head_present: boolean; branch_present: boolean };
 
-const API = (import.meta as any).env?.VITE_API_URL || "";
+const API = (import.meta as any).env?.VITE_API_BASE_URL || (import.meta as any).env?.VITE_API_URL || "";
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`${API}/api${path}`, {
     ...init,

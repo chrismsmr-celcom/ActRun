@@ -1,0 +1,16 @@
+services:
+  - type: web
+    name: cohort-api
+    runtime: python
+    plan: free
+    rootDir: python
+    buildCommand: pip install ".[postgres]"
+    startCommand: uvicorn cerbere_cohort.api:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+    envVars:
+      - key: DATABASE_URL
+        sync: false
+      - key: COHORT_CORS_ORIGINS
+        sync: false
+      - key: COHORT_REQUIRE_LEASES
+        value: "false"

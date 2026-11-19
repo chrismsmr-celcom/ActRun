@@ -1,11 +1,12 @@
-"""Small single-process HTTP adapter for the Cohort Python runtime.
+"""HTTP adapter for the Cohort runtime.
 
-This adapter exposes the existing Workspace/PersistentWorkspace primitives.
-It is intentionally documented as single-process: branch handles and the
-branch registry are process-local until the runtime grows durable branch IDs.
+Workspace state and branch working copies are persisted in the configured
+database. Until organization-scoped access and cross-instance branch locking
+are implemented, deploy this API as a single instance.
 """
 from __future__ import annotations
 
+import json
 import os
 import threading
 import uuid
@@ -15,6 +16,7 @@ from typing import Any, Literal
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+from cerbere_cohort.workspace import Branch
 
 from cerbere_cohort import (
     ConflictError,
@@ -29,6 +31,8 @@ from cerbere_cohort.postgres import PostgresPersistentWorkspace
 
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 DB_PATH = Path(os.getenv("COHORT_DB_PATH", "./data/cohort.db"))
+if DATABASE_URL and not DATABASE_URL.startswith(("postgres://", "postgresql://")):
+    raise RuntimeError("DATABASE_URL must be a PostgreSQL connection URL")
 if not DATABASE_URL:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 workspace = (
@@ -41,6 +45,35 @@ workspace._workspace._require_leases = (
 )
 _lock = threading.RLock()
 _branches: dict[str, dict[str, Any]] = {}
+
+workspace._conn.execute("CREATE TABLE IF NOT EXISTS api_branches (branch_id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, branch_name TEXT NOT NULL, base_version TEXT NOT NULL, current_data_json TEXT NOT NULL, intents_json TEXT NOT NULL, status TEXT NOT NULL, conflicting_keys_json TEXT NOT NULL, created_at TEXT NOT NULL)")
+workspace._conn.commit()
+
+def _save_api_branch(branch_id: str, item: dict[str, Any]) -> None:
+    b = item['branch']
+    workspace._conn.execute("INSERT INTO api_branches (branch_id, agent_id, branch_name, base_version, current_data_json, intents_json, status, conflicting_keys_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(branch_id) DO UPDATE SET current_data_json=excluded.current_data_json, intents_json=excluded.intents_json, status=excluded.status, conflicting_keys_json=excluded.conflicting_keys_json", (branch_id, item['agent_id'], b.name, b.base_version, json.dumps(b.current_data, ensure_ascii=False), json.dumps(b.intents, ensure_ascii=False), item['status'], json.dumps(item.get('conflicting_keys', [])), item['created_at']))
+    workspace._conn.commit()
+
+def _restore_api_branches() -> None:
+    committed = {
+        (event.agent_id, event.payload.get('branch_name'))
+        for event in workspace.get_events()
+        if event.action == 'workspace.commit'
+    }
+    for row in workspace._conn.execute('SELECT * FROM api_branches').fetchall():
+        if (row['agent_id'], row['branch_name']) in committed:
+            workspace._conn.execute("UPDATE api_branches SET status = 'merged', conflicting_keys_json = '[]' WHERE branch_id = ?", (row['branch_id'],))
+            continue
+        base = workspace._workspace._snapshots.get(row['base_version'])
+        if base is None:
+            continue
+        b = Branch(row['branch_name'], base, workspace._workspace._lease_manager, row['agent_id'], workspace._workspace._require_leases)
+        b.current_data = json.loads(row['current_data_json'])
+        b.intents = json.loads(row['intents_json'])
+        _branches[row['branch_id']] = {'branch': b, 'agent_id': row['agent_id'], 'status': row['status'], 'conflicting_keys': json.loads(row['conflicting_keys_json']), 'created_at': row['created_at']}
+    workspace._conn.commit()
+
+_restore_api_branches()
 
 app = FastAPI(title="Cerbere Cohort API", version="0.1.0")
 origins = [x.strip() for x in os.getenv("COHORT_CORS_ORIGINS", "*").split(",") if x.strip()]
@@ -99,8 +132,8 @@ def health():
         "ok": True,
         "service": "cerbere-cohort",
         "runtime": "python",
-        "persistence": "sqlite",
-        "branch_registry": "process-memory",
+        "persistence": "postgresql" if DATABASE_URL.startswith(("postgres://", "postgresql://")) else "sqlite",
+        "branch_registry": "database",
     }
 
 
@@ -144,6 +177,7 @@ def create_branch(body: BranchCreate):
             "conflicting_keys": [],
             "created_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
         }
+        _save_api_branch(branch_id, _branches[branch_id])
     return _branch_summary(branch_id, _branches[branch_id])
 
 
@@ -155,6 +189,7 @@ def write_branch(branch_id: str, body: BranchWrite):
             raise HTTPException(404, "Open branch not found")
         try:
             item["branch"].set(body.key, body.value, intent=body.intent)
+            _save_api_branch(branch_id, item)
         except (LeaseError, ValueError) as exc:
             raise HTTPException(409, detail={"message": str(exc), "code": getattr(exc, "code", "write_error")}) from exc
     return {"ok": True, "branch_id": branch_id, "key": body.key}
@@ -170,9 +205,11 @@ def commit_branch(branch_id: str):
             snapshot = workspace.commit(item["agent_id"], item["branch"])
             item["status"] = "merged"
             item["conflicting_keys"] = []
+            _save_api_branch(branch_id, item)
             return {"ok": True, "head": snapshot.version_id, "branch": _branch_summary(branch_id, item)}
         except ConflictError as exc:
             item["conflicting_keys"] = list(exc.conflicting_keys)
+            _save_api_branch(branch_id, item)
             return {
                 "ok": False,
                 "conflict": True,
@@ -248,9 +285,11 @@ def resolve_branch(branch_id: str, body: ResolveRequest):
             snapshot = workspace.commit(item["agent_id"], item["branch"], resolver=AuditedResolver())
             item["status"] = "merged"
             item["conflicting_keys"] = []
+            _save_api_branch(branch_id, item)
             return {"ok": True, "head": snapshot.version_id, "branch": _branch_summary(branch_id, item)}
         except ConflictError as exc:
             item["conflicting_keys"] = list(exc.conflicting_keys)
+            _save_api_branch(branch_id, item)
             raise HTTPException(409, detail={"message": str(exc), "conflicting_keys": list(exc.conflicting_keys)}) from exc
 
 
@@ -320,10 +359,11 @@ def release_lease(key: str, agent_id: str):
 def get_settings():
     return {
         "require_leases": workspace._workspace._require_leases,
-        "persistence": "sqlite",
-        "database_path": str(DB_PATH),
+        "persistence": "postgresql" if DATABASE_URL.startswith(("postgres://", "postgresql://")) else "sqlite",
+        "database_path": "managed" if DATABASE_URL.startswith(("postgres://", "postgresql://")) else str(DB_PATH),
         "multi_process": False,
-        "authentication": False,
+        "database_transactions": DATABASE_URL.startswith(("postgres://", "postgresql://")),
+        "authentication": "not_configured",
     }
 
 
@@ -332,7 +372,7 @@ def main():
     import uvicorn
     uvicorn.run(
         "cerbere_cohort.api:app",
-        host=os.getenv("COHORT_API_HOST", "127.0.0.1"),
-        port=int(os.getenv("COHORT_API_PORT", "8000")),
+        host=os.getenv("COHORT_API_HOST", "0.0.0.0"),
+        port=int(os.getenv("PORT", os.getenv("COHORT_API_PORT", "8000"))),
         reload=False,
     )
