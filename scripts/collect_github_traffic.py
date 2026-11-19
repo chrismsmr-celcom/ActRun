@@ -13,6 +13,7 @@ REPOSITORY = "chrismsmr-celcom/cerbere-cohort"
 OUTPUT = Path("metrics/github-traffic.json")
 
 
+
 def github_get(endpoint: str, token: str) -> dict:
     request = urllib.request.Request(
         f"https://api.github.com/repos/{REPOSITORY}/traffic/{endpoint}",
@@ -23,8 +24,17 @@ def github_get(endpoint: str, token: str) -> dict:
             "User-Agent": "cohort-traffic-archive",
         },
     )
-    with urllib.request.urlopen(request, timeout=20) as response:
-        return json.load(response)
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            return json.load(response)
+    except urllib.error.HTTPError as error:
+        details = error.read().decode("utf-8", errors="replace")
+        print(f"GitHub API error: HTTP {error.code}")
+        print(f"Response: {details}")
+        print(f"Rate limit remaining: {error.headers.get('X-RateLimit-Remaining')}")
+        print(f"Required permissions: {error.headers.get('X-Accepted-GitHub-Permissions')}")
+        raise
+
 
 
 def main() -> None:
