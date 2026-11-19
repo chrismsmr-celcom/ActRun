@@ -121,8 +121,8 @@ def health():
         "ok": True,
         "service": "cerbere-cohort",
         "runtime": "python",
-        "persistence": "sqlite",
-        "branch_registry": "process-memory",
+        "persistence": "postgresql" if DATABASE_URL.startswith(("postgres://", "postgresql://")) else "sqlite",
+        "branch_registry": "database",
     }
 
 
@@ -166,6 +166,7 @@ def create_branch(body: BranchCreate):
             "conflicting_keys": [],
             "created_at": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat(),
         }
+        _save_api_branch(branch_id, _branches[branch_id])
     return _branch_summary(branch_id, _branches[branch_id])
 
 
@@ -177,6 +178,7 @@ def write_branch(branch_id: str, body: BranchWrite):
             raise HTTPException(404, "Open branch not found")
         try:
             item["branch"].set(body.key, body.value, intent=body.intent)
+            _save_api_branch(branch_id, item)
         except (LeaseError, ValueError) as exc:
             raise HTTPException(409, detail={"message": str(exc), "code": getattr(exc, "code", "write_error")}) from exc
     return {"ok": True, "branch_id": branch_id, "key": body.key}
@@ -192,10 +194,12 @@ def commit_branch(branch_id: str):
             snapshot = workspace.commit(item["agent_id"], item["branch"])
             item["status"] = "merged"
             item["conflicting_keys"] = []
+            _save_api_branch(branch_id, item)
             return {"ok": True, "head": snapshot.version_id, "branch": _branch_summary(branch_id, item)}
         except ConflictError as exc:
             item["conflicting_keys"] = list(exc.conflicting_keys)
-            return {
+            _save_api_branch(branch_id, item)
+            return
                 "ok": False,
                 "conflict": True,
                 "branch": _branch_summary(branch_id, item),
@@ -343,7 +347,7 @@ def get_settings():
     return {
         "require_leases": workspace._workspace._require_leases,
         "persistence": "sqlite",
-        "database_path": str(DB_PATH),
+        "database_path": "managed" if DATABASE_URL else str(DB_PATH),
         "multi_process": False,
         "authentication": False,
     }
