@@ -325,3 +325,72 @@ body{
  .cohort-app.mobile-nav-open{overflow:hidden}
  .brand-lockup{padding-bottom:18px}
 }
+
+
+/* Final brand pass — black/neutral surfaces, Cohort colour used as signal. */
+:root{
+  color-scheme:light;
+  --bg:#f7f7f5;--panel:#fff;--panel-alt:#fbfbfa;--surface:#f0f0ed;
+  --line:#e7e6e1;--line-strong:#d7d5ce;--ink:#191a1d;--muted:#72747b;--faint:#a0a1a5;
+  --accent:#7C4DEB;--accent-soft:#f1ebff;
+  --green:#0E9F8E;--green-soft:#e2f5f1;
+  --red:#E8546B;--red-soft:#fce9ed;
+  --violet:#7C4DEB;--violet-soft:#f1ebff;--coral:#E8546B;
+}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --bg:#08090a;--panel:#101113;--panel-alt:#141619;--surface:#1a1c20;
+  --line:#25272b;--line-strong:#36383e;--ink:#f1f0ed;--muted:#a1a2a6;--faint:#73757b;
+  --accent:#A78BFA;--accent-soft:#241d36;
+  --green:#2DD4BF;--green-soft:#102d2a;
+  --red:#FB7185;--red-soft:#351a22;
+  --violet:#A78BFA;--violet-soft:#241d36;--coral:#FB7185;
+}
+html,body,.cohort-app{background-color:var(--bg);color:var(--ink)}
+body{font-family:'DM Sans',system-ui,sans-serif}
+body:before{
+  content:"";position:fixed;inset:0;z-index:1000;pointer-events:none;opacity:.10;
+  background-image:url("data:image/svg+xml,%3Csvg viewBox='0 0 180 180' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='grain'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.88' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23grain)' opacity='.2'/%3E%3C/svg%3E");
+}
+:root[data-theme="dark"] body:before{opacity:.065}
+.app-nav{background:var(--panel);border-color:var(--line)}
+.app-main{background:transparent}
+.nav-link.active{background:var(--surface);color:var(--ink)}
+.nav-link.active:before{background:linear-gradient(180deg,#8B5CF6 0%,#14B8A6 55%,#FB7185 100%)}
+.nav-link.active .nav-icon{color:var(--violet)}
+.workspace-avatar{background:linear-gradient(135deg,#8B5CF6 0 34%,#14B8A6 34% 67%,#FB7185 67%);color:#fff}
+.nav-icon svg,.topbar-icon svg,.nav-collapse-button svg{stroke-width:1.75}
+.metric-card:nth-child(1){border-top:2px solid #8B5CF6}
+.metric-card:nth-child(2){border-top:2px solid #FB7185}
+.metric-card:nth-child(3){border-top:2px solid #14B8A6}
+.metric-card:nth-child(4){border-top:2px solid #8B5CF6}
+.legend-commit,.commit-bar{background:#14B8A6}
+.legend-conflict,.conflict-bar{background:#FB7185}
+.attention-mark{background:var(--red-soft);color:var(--coral)}
+.text-action,.card-footer-link{color:var(--accent)}
+.button-primary{background:var(--ink);border-color:var(--ink);color:var(--bg)}
+.button-primary:hover{background:var(--accent);border-color:var(--accent);color:#fff}
+.metric-card strong,.data-table code,.health-meta code,.state-head-label code,
+.inspector-meta,.code-block,.event-name,.setting-line code,.eyebrow,
+.nav-section-label,.subtle-tag{
+  font-family:'Courier Prime','IBM Plex Mono','Courier New',monospace;
+  font-variant-numeric:tabular-nums lining-nums;
+}
+.metric-card strong{letter-spacing:-1px}
+.surface-card,.metric-card,.health-strip,.workspace-picker,.runtime-status-card,.modal-card{
+  box-shadow:var(--shadow);transition:border-color .18s,box-shadow .18s,transform .18s;
+}
+.surface-card:hover{border-color:var(--line-strong)}
+.data-table tbody tr{transition:background .15s}
+.data-table tbody tr:hover{background:var(--panel-alt)}
+.page-content{animation:cohort-page-enter .28s cubic-bezier(.2,.7,.2,1) both}
+@keyframes cohort-page-enter{from{opacity:0;transform:translateY(5px)}to{opacity:1;transform:translateY(0)}}
+.mobile-nav-backdrop{display:none}
+@media(max-width:720px){
+  .mobile-nav-backdrop{display:block;position:fixed;inset:0;z-index:30;border:0;background:#0008;backdrop-filter:blur(2px);animation:cohort-fade-in .18s ease both}
+  .app-nav{z-index:35}
+  .cohort-app.mobile-nav-open .app-nav{box-shadow:16px 0 48px #0005}
+}
+@media(prefers-reduced-motion:reduce){
+  *,*:before,*:after{scroll-behavior:auto!important;animation-duration:.01ms!important;animation-iteration-count:1!important;transition-duration:.01ms!important}
+}
