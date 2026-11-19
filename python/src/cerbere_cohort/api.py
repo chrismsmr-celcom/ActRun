@@ -176,6 +176,39 @@ def commit_branch(branch_id: str):
             }
 
 
+@app.get("/api/branches/{branch_id}/conflict")
+def get_branch_conflict(branch_id: str):
+    with _lock:
+        item = _branches.get(branch_id)
+        if not item or item["status"] != "open":
+            raise HTTPException(404, "Open branch not found")
+        keys = item.get("conflicting_keys", [])
+        if not keys:
+            raise HTTPException(409, "Branch has no recorded conflict")
+        base = workspace._workspace._snapshots.get(item["branch"].base_version)
+        if base is None:
+            raise HTTPException(409, "Branch base snapshot is no longer available")
+        head = workspace.head
+        branch_data = item["branch"].current_data
+        return {
+            "branch_id": branch_id,
+            "base_version": base.version_id,
+            "head_version": head.version_id,
+            "conflicts": [
+                {
+                    "key": key,
+                    "base": base.data.get(key),
+                    "head": head.data.get(key),
+                    "branch": branch_data.get(key),
+                    "base_present": key in base.entries,
+                    "head_present": key in head.entries,
+                    "branch_present": key in branch_data,
+                }
+                for key in keys
+            ],
+        }
+
+
 @app.post("/api/branches/{branch_id}/resolve")
 def resolve_branch(branch_id: str, body: ResolveRequest):
     with _lock:
