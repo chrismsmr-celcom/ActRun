@@ -71,8 +71,8 @@ class _Connection:
             "idx_events_action": "cohort_idx_events_action",
         }
         for source, target in namespaced.items():
-            statement = re.sub(rf"\\b{source}\\b", target, statement, flags=re.I)
-        statement = re.sub(r"ORDER\\s+BY\\s+rowid", "ORDER BY seq", statement, flags=re.I)
+            statement = re.sub(rf"\b{source}\b", target, statement, flags=re.I)
+        statement = re.sub(r"ORDER\s+BY\s+rowid", "ORDER BY seq", statement, flags=re.I)
         statement = statement.replace("MAX(fencing_token, excluded.fencing_token)",
                                       "GREATEST(cohort_lease_counters.fencing_token, EXCLUDED.fencing_token)")
         if ignore_insert and "ON CONFLICT" not in statement.upper():
