@@ -199,7 +199,7 @@ def commit_branch(branch_id: str):
         except ConflictError as exc:
             item["conflicting_keys"] = list(exc.conflicting_keys)
             _save_api_branch(branch_id, item)
-            return
+            return {
                 "ok": False,
                 "conflict": True,
                 "branch": _branch_summary(branch_id, item),
@@ -277,6 +277,7 @@ def resolve_branch(branch_id: str, body: ResolveRequest):
             return {"ok": True, "head": snapshot.version_id, "branch": _branch_summary(branch_id, item)}
         except ConflictError as exc:
             item["conflicting_keys"] = list(exc.conflicting_keys)
+            _save_api_branch(branch_id, item)
             raise HTTPException(409, detail={"message": str(exc), "conflicting_keys": list(exc.conflicting_keys)}) from exc
 
 
