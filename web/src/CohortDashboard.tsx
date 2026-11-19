@@ -112,7 +112,17 @@ export default function CohortDashboard() {
     return days;
   }, [events]);
 
-  const openResolve = async (branch: Branch) => {\n    openResolve(branch); setConflictDetails([]);\n    try { const detail = await api<{ conflicts: ConflictDetail[] }>(`/branches/${branch.id}/conflict`); setConflictDetails(detail.conflicts); }\n    catch (err) { notify(err instanceof Error ? err.message : "Could not load conflict details"); }\n  };\n  const createBranch = async () => {
+  const openResolve = async (branch: Branch) => {
+    setResolveBranch(branch);
+    setConflictDetails([]);
+    try {
+      const detail = await api<{ conflicts: ConflictDetail[] }>(`/branches/${branch.id}/conflict`);
+      setConflictDetails(detail.conflicts);
+    } catch (err) {
+      notify(err instanceof Error ? err.message : "Could not load conflict details");
+    }
+  };
+  const createBranch = async () => {
     if (!branchName.trim() || !agentId.trim()) return;
     await run(async () => {
       await api<Branch>("/branches", { method: "POST", body: JSON.stringify({ agent_id: agentId.trim(), name: branchName.trim() }) });
@@ -179,7 +189,7 @@ export default function CohortDashboard() {
             <p className="empty-note">A resolver is a policy choice, not proof that the resulting content is correct.</p>
           </div></details>
           <details><summary>Leases</summary><div className="under-body">
-            {leases.length ? leases.map((lease) => <div className="lease-mini" key={lease.key}><b>{lease.key}</b><span>{lease.agent_id}</span><small>token {lease.fencing_token} · expires {dateTime(lease.expires_at)}</small></div>) : <p className="empty-note">No active leases.</p>}
+            {leases.length ? leases.map((lease) => <div className="lease-mini" key={lease.key}><b>{lease.key}</b><span>{lease.agent_id}</span><small>token {lease.fencing_token} · expires {dateTime(lease.expires_at)}</small><button className="small-button" onClick={() => void releaseLease(lease)}>Release lease</button></div>) : <p className="empty-note">No active leases.</p>}
             <label className="field-label">Agent ID<input value={leaseAgent} onChange={(e) => setLeaseAgent(e.target.value)}/></label>
             <label className="field-label">Resource key<input value={leaseKey} onChange={(e) => setLeaseKey(e.target.value)} placeholder="shared/resource"/></label>
             <button className="primary-btn" onClick={acquireLease} disabled={busy || !leaseKey.trim()}>Acquire 60s lease</button>
