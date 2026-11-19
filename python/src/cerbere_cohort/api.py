@@ -171,8 +171,8 @@ def commit_branch(branch_id: str):
                 "conflict": True,
                 "branch": _branch_summary(branch_id, item),
                 "conflicting_keys": list(exc.conflicting_keys),
-                "head_version": exc.head_version,
-                "base_version": exc.base_version,
+                "head_version": exc.details.get("head_version"),
+                "base_version": exc.details.get("base_version"),
             }
 
 
