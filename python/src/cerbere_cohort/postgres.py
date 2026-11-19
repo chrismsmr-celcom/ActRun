@@ -16,6 +16,11 @@ class _Row(dict):
 
 
 def _row_factory(cursor):
+    # PostgreSQL commands such as CREATE TABLE and INSERT may return no
+    # result columns. Psycopg still asks for a row factory while processing
+    # the command, so provide a harmless tuple factory in that case.
+    if cursor.description is None:
+        return lambda values: tuple(values)
     names = [column.name for column in cursor.description]
     def make_row(values):
         return _Row(zip(names, values))
@@ -51,9 +56,25 @@ class _Connection:
             updates = [c for c in columns if c != key]
             clause = ", ".join(f"{c}=EXCLUDED.{c}" for c in updates)
             statement += f" ON CONFLICT ({key}) DO UPDATE SET {clause}"
+        # Keep Cohort's tables isolated from generic tables that may already
+        # exist in a shared Supabase/Postgres database (notably public.events).
+        # Apply this mapping to reads, writes, indexes, and branch storage.
+        namespaced = {
+            "objects": "cohort_objects",
+            "events": "cohort_events",
+            "leases": "cohort_leases",
+            "metadata": "cohort_metadata",
+            "lease_counters": "cohort_lease_counters",
+            "api_branches": "cohort_api_branches",
+            "idx_events_timestamp": "cohort_idx_events_timestamp",
+            "idx_events_agent": "cohort_idx_events_agent",
+            "idx_events_action": "cohort_idx_events_action",
+        }
+        for source, target in namespaced.items():
+            statement = re.sub(rf"\b{source}\b", target, statement, flags=re.I)
         statement = re.sub(r"ORDER\s+BY\s+rowid", "ORDER BY seq", statement, flags=re.I)
         statement = statement.replace("MAX(fencing_token, excluded.fencing_token)",
-                                      "GREATEST(lease_counters.fencing_token, EXCLUDED.fencing_token)")
+                                      "GREATEST(cohort_lease_counters.fencing_token, EXCLUDED.fencing_token)")
         if ignore_insert and "ON CONFLICT" not in statement.upper():
             statement += " ON CONFLICT DO NOTHING"
         return statement.replace("?", "%s")
