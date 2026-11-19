@@ -19,6 +19,7 @@ from mcp.server.fastmcp.exceptions import ToolError
 from cerbere_cohort.errors import CerbereError
 from cerbere_cohort.persistence import PersistentWorkspace
 from cerbere_cohort.postgres import PostgresPersistentWorkspace
+from cerbere_cohort.postgres import PostgresPersistentWorkspace
 from cerbere_cohort.workspace import Branch
 
 
@@ -324,7 +325,7 @@ def main() -> None:
         default=os.getenv(
             "COHORT_DB_PATH", str(Path.home() / ".cerbere-cohort" / "workspace.db")
         ),
-        help="SQLite database path (default: ~/.cerbere-cohort/workspace.db)",
+        help="Local SQLite path; production uses DATABASE_URL (Supabase PostgreSQL)",
     )
     parser.add_argument("--host", default=os.getenv("COHORT_MCP_HOST", "127.0.0.1"))
     parser.add_argument("--port", type=int, default=int(os.getenv("COHORT_MCP_PORT", "8765")))
