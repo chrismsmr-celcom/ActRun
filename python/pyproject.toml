@@ -21,7 +21,7 @@ dev = [
 ]
 
 [project.scripts]
-cerbere-cohort-api = "uvicorn:main"
+cerbere-cohort-api = "cerbere_cohort.api:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
