@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Activity, ChevronDown, Command, Database, GitBranch, LayoutDashboard, Moon, PanelLeftClose, PanelLeftOpen, RefreshCw, ScrollText, Settings2, Sun } from "lucide-react";
 import cohortLogo from "./cohortLogo";
 import "./cohort-dashboard.css";
+import { organizationId, supabase } from "./auth";
 
 type Tab = "Overview" | "Branches" | "State" | "Event log" | "Settings";
 type EventItem = { event_id: string; timestamp: string; agent_id: string; action: string; payload: Record<string, unknown>; schema_version: string };
@@ -14,9 +15,18 @@ type ConflictDetail = { key: string; base: unknown; head: unknown; branch: unkno
 
 const API = (import.meta as any).env?.VITE_API_BASE_URL || (import.meta as any).env?.VITE_API_URL || "";
 async function api<T>(path: string, init?: RequestInit): Promise<T> {
+  const headers: Record<string, string> = {
+    "Content-Type": "application/json",
+    "X-Organization-ID": organizationId,
+    ...((init?.headers || {}) as Record<string, string>),
+  };
+  if (supabase) {
+    const { data } = await supabase.auth.getSession();
+    if (data.session?.access_token) headers.Authorization = `Bearer ${data.session.access_token}`;
+  }
   const response = await fetch(`${API}/api${path}`, {
     ...init,
-    headers: { "Content-Type": "application/json", ...(init?.headers || {}) },
+    headers,
   });
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {
