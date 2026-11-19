@@ -38,11 +38,11 @@ class _Connection:
         upper = statement.upper()
         if upper == "BEGIN IMMEDIATE":
             return "BEGIN"
-        ignore_insert = bool(re.match(r"^INSERT\\s+OR\\s+IGNORE\\s+INTO", statement, flags=re.I))
-        statement = re.sub(r"^INSERT\\s+OR\\s+IGNORE\\s+INTO", "INSERT INTO", statement, flags=re.I)
-        if re.match(r"^INSERT\\s+OR\\s+REPLACE\\s+INTO", statement, flags=re.I):
-            statement = re.sub(r"^INSERT\\s+OR\\s+REPLACE\\s+INTO", "INSERT INTO", statement, flags=re.I)
-            match = re.search(r"INSERT INTO\\s+([\\w]+)\\s*\\(([^)]+)\\)\\s*VALUES", statement, flags=re.I)
+        ignore_insert = bool(re.match(r"^INSERT\s+OR\s+IGNORE\s+INTO", statement, flags=re.I))
+        statement = re.sub(r"^INSERT\s+OR\s+IGNORE\s+INTO", "INSERT INTO", statement, flags=re.I)
+        if re.match(r"^INSERT\s+OR\s+REPLACE\s+INTO", statement, flags=re.I):
+            statement = re.sub(r"^INSERT\s+OR\s+REPLACE\s+INTO", "INSERT INTO", statement, flags=re.I)
+            match = re.search(r"INSERT INTO\s+([\w]+)\s*\(([^)]+)\)\s*VALUES", statement, flags=re.I)
             if not match:
                 raise ValueError("Unsupported INSERT OR REPLACE statement")
             table = match.group(1)
@@ -51,7 +51,7 @@ class _Connection:
             updates = [c for c in columns if c != key]
             clause = ", ".join(f"{c}=EXCLUDED.{c}" for c in updates)
             statement += f" ON CONFLICT ({key}) DO UPDATE SET {clause}"
-        statement = re.sub(r"ORDER\\s+BY\\s+rowid", "ORDER BY seq", statement, flags=re.I)
+        statement = re.sub(r"ORDER\s+BY\s+rowid", "ORDER BY seq", statement, flags=re.I)
         statement = statement.replace("MAX(fencing_token, excluded.fencing_token)",
                                       "GREATEST(lease_counters.fencing_token, EXCLUDED.fencing_token)")
         if ignore_insert and "ON CONFLICT" not in statement.upper():
