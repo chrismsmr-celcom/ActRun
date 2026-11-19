@@ -13,11 +13,13 @@ import threading
 import uuid
 from pathlib import Path
 from typing import Any, Literal
+from uuid import UUID
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field, field_validator
 from cerbere_cohort.workspace import Branch
+from cerbere_cohort.telemetry import send_installation_ping
 from cerbere_cohort.auth import require_workspace_member, require_workspace_writer
 
 from cerbere_cohort import (
@@ -44,10 +46,11 @@ if _HOSTED and not DATABASE_URL:
     raise RuntimeError("DATABASE_URL is required on hosted deployments; refusing to start without authentication")
 if not DATABASE_URL:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+REQUIRE_LEASES = os.getenv("COHORT_REQUIRE_LEASES", "false").lower() in {"1", "true", "yes", "on"}
 workspace = (
-    PostgresPersistentWorkspace(DATABASE_URL)
+    PostgresPersistentWorkspace(DATABASE_URL, require_leases=REQUIRE_LEASES)
     if DATABASE_URL.startswith(("postgres://", "postgresql://"))
-    else PersistentWorkspace(DB_PATH)
+    else PersistentWorkspace(DB_PATH, require_leases=REQUIRE_LEASES)
 )
 workspace._workspace._require_leases = (
     os.getenv("COHORT_REQUIRE_LEASES", "false").lower() == "true"
@@ -85,6 +88,27 @@ def _restore_api_branches() -> None:
 _restore_api_branches()
 
 app = FastAPI(title="Cerbere Cohort API", version="0.1.0")
+
+
+def _telemetry_collector_enabled() -> bool:
+    return os.getenv("COHORT_TELEMETRY_COLLECTOR_ENABLED", "false").lower() in {"1", "true", "yes", "on"}
+
+
+@app.on_event("startup")
+def startup_optional_telemetry():
+    if _telemetry_collector_enabled():
+        if not DATABASE_URL:
+            raise RuntimeError("Telemetry collection requires PostgreSQL DATABASE_URL")
+        workspace._conn.execute("""CREATE TABLE IF NOT EXISTS cohort_telemetry_installations (
+            installation_id TEXT PRIMARY KEY,
+            version TEXT NOT NULL,
+            deployment_type TEXT NOT NULL,
+            first_seen TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            last_seen TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )""")
+        workspace._conn.commit()
+    if os.getenv("COHORT_TELEMETRY", "false").lower() in {"1", "true", "yes", "on"}:
+        threading.Thread(target=send_installation_ping, daemon=True, name="cohort-telemetry").start()
 origins = [x.strip() for x in os.getenv("COHORT_CORS_ORIGINS", "*").split(",") if x.strip()]
 if DATABASE_URL and (not os.getenv("COHORT_CORS_ORIGINS") or "*" in origins):
     raise RuntimeError("Set COHORT_CORS_ORIGINS to explicit frontend origins in production")
@@ -124,6 +148,12 @@ class LeaseRequest(BaseModel):
     duration_seconds: float = Field(default=60, gt=0, le=86400)
 
 
+class TelemetryInstall(BaseModel):
+    installation_id: UUID
+    version: str = Field(min_length=1, max_length=40)
+    deployment_type: Literal["self-hosted"] = "self-hosted"
+
+
 class ResolveRequest(BaseModel):
     strategy: Literal["PreferHead", "PreferBranch", "PreferAgent"] = "PreferHead"
     rationale: str = Field(min_length=1, max_length=2000)
@@ -156,6 +186,49 @@ def health():
         "persistence": "postgresql" if DATABASE_URL.startswith(("postgres://", "postgresql://")) else "sqlite",
         "branch_registry": "database",
         "authentication": "supabase" if DATABASE_URL else "development-bypass",
+    }
+
+
+@app.post("/api/telemetry/install", status_code=202)
+def register_telemetry_installation(body: TelemetryInstall):
+    """Accept an opt-in, anonymous self-hosted installation heartbeat."""
+    if not _telemetry_collector_enabled():
+        raise HTTPException(status_code=404, detail="Telemetry collection is disabled")
+    if not DATABASE_URL:
+        raise HTTPException(status_code=503, detail="Telemetry collector requires PostgreSQL")
+    workspace._conn.execute(
+        """INSERT INTO cohort_telemetry_installations
+           (installation_id, version, deployment_type, first_seen, last_seen)
+           VALUES (?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+           ON CONFLICT (installation_id) DO UPDATE SET
+             version = EXCLUDED.version,
+             deployment_type = EXCLUDED.deployment_type,
+             last_seen = CURRENT_TIMESTAMP""",
+        (str(body.installation_id), body.version, body.deployment_type),
+    )
+    workspace._conn.commit()
+    return {"accepted": True}
+
+
+@app.get("/api/traction", dependencies=[Depends(require_workspace_member)])
+def get_traction_metrics():
+    """Return aggregate opt-in installation counts to authenticated workspace members."""
+    if not _telemetry_collector_enabled() or not DATABASE_URL:
+        raise HTTPException(status_code=404, detail="Traction telemetry is not enabled")
+    row = workspace._conn.execute(
+        """SELECT COUNT(*) AS total_installations,
+                  COUNT(*) FILTER (WHERE last_seen >= CURRENT_TIMESTAMP - INTERVAL '30 days') AS active_30d
+           FROM cohort_telemetry_installations"""
+    ).fetchone()
+    versions = workspace._conn.execute(
+        """SELECT version, COUNT(*) AS installations
+           FROM cohort_telemetry_installations GROUP BY version ORDER BY installations DESC"""
+    ).fetchall()
+    return {
+        "self_hosted_installations_total": row["total_installations"],
+        "self_hosted_installations_active_30d": row["active_30d"],
+        "versions": [{"version": item["version"], "installations": item["installations"]} for item in versions],
+        "note": "Opt-in, self-reported installation telemetry; not a count of unique people or customers.",
     }
 
 
