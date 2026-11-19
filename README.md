@@ -39,10 +39,13 @@ The current Python implementation uses a key-value workspace.
 | Leases | Temporary resource leases support expiration, optional waiting, and ownership checks. |
 | Deadlock detection | A wait-for graph detects cycles before an agent waits indefinitely. |
 | SQLite persistence | `PersistentWorkspace` stores content objects, events, and active leases, then reconstructs state by replay on reload. |
-| MCP integration | An early stdio MCP server exposes workspace, branch, commit, lease, and event tools. |
+| PostgreSQL persistence | The hosted API has a PostgreSQL persistence adapter; validate it against your own database before production use. |
+| REST API | FastAPI exposes workspace state, branches, branch diffs, commits, conflict resolution, leases, events, and settings. |
+| API authentication | Hosted PostgreSQL mode validates Supabase JWTs and checks membership in one configured organization. |
+| MCP integration | An early stdio MCP server exposes workspace, branch, commit, lease, and event tools. Its branch registry is separate from REST. |
 | Rust trace tool | An early CLI parses versioned JSONL events and reports basic counts and coordination metrics. |
 
-cerbere-cohort is intended to sit alongside an agent framework. It does not create agents or execute model calls.
+cerbere-cohort is intended to sit alongside an agent framework. It does not create agents, schedule model calls, or execute agents' external tools. Its job is to coordinate shared state and make concurrent changes explicit.
 
 ## Quick start
 
@@ -212,6 +215,32 @@ cargo run -p cerbere-cohort-trace -- example-trace.jsonl
 
 The Python event model, JSON Schema, sample JSONL log, and Rust parser now use the same `1.0.0` envelope. The Python reader and Rust parser also accept legacy records that omit `schema_version`, treating them as `1.0.0`. New events always serialize the version field. The current conflict metric is calculated as conflict events divided by successful plus aborted commit attempts. The analyzer remains an early prototype; run it against your own exported logs before depending on its metrics.
 
+## Hosted REST API (early beta)
+
+The repository also contains a FastAPI service for a hosted Cohort deployment. It is separate from the local Python-library quick start above.
+
+Current route groups include:
+
+| Route | Purpose |
+| --- | --- |
+| `GET /api/health` | Health check |
+| `GET /api/overview` | Workspace overview |
+| `GET /api/state` | Read shared workspace state |
+| `GET /api/branches` | List branches |
+| `POST /api/branches` | Create a branch |
+| `GET /api/branches/{branch_id}/diff` | Preview proposed changes against the branch base and current HEAD |
+| `PUT /api/branches/{branch_id}/state` | Update branch state |
+| `POST /api/branches/{branch_id}/commit` | Attempt a branch commit |
+| `GET /api/branches/{branch_id}/conflict` | Inspect branch conflicts |
+| `POST /api/branches/{branch_id}/resolve` | Submit a conflict resolution |
+| `GET/POST/DELETE /api/leases` | Inspect, acquire, and release leases |
+| `GET /api/events` | Read coordination events |
+| `GET /api/settings` | Read deployment settings |
+
+Authenticated routes require a Supabase access token and enforce member or writer permissions. The health endpoint is public. In hosted PostgreSQL mode, the service is configured for one organization per deployment; this is **not** general multi-tenant isolation. The current API process is not a horizontally scalable, multi-instance coordination service.
+
+The exact request and response schemas are defined in the FastAPI implementation and should be treated as authoritative. Interactive API documentation is available from FastAPI at `/docs` when the service is running.
+
 ## MCP server (experimental)
 
 An early stdio MCP server is located in `integrations/mcp-server`. It exposes tools for reading workspace state, creating branches, writing to a branch, committing, acquiring and releasing leases, and reading events.
@@ -240,7 +269,7 @@ flowchart TD
     WS --> LEASE["Lease manager and wait-for graph"]
     WS --> LOG["Structured event log"]
     WS --> STORE["Content store and snapshots"]
-    STORE --> DB["SQLite or PostgreSQL persistence"]
+    STORE --> DB["SQLite persistence (library) / PostgreSQL adapter (hosted API)"]
     LOG --> JSONL["JSONL export"]
     JSONL -. "interoperability work remaining" .-> RUST["Rust trace analyzer"]
 ```
@@ -272,12 +301,18 @@ flowchart TD
 | Event-log replay and replay validation | Implemented; automated tests present |
 | Leases and wait-for deadlock detection | Implemented; automated tests present |
 | SQLite persistence and JSONL export | Implemented; automated tests present |
-| MCP stdio integration | Prototype; not yet established as production-ready |
+| PostgreSQL persistence adapter | Implemented in the hosted API; live production database validation is deployment-specific |
+| FastAPI REST API and persisted REST branch registry | Implemented; single-organization, single-instance deployment only |
+| Supabase JWT authentication and organization membership checks | Implemented for hosted PostgreSQL mode; not general multi-tenant isolation |
+| Branch diff preview | Implemented at `GET /api/branches/{branch_id}/diff` |
+| MCP stdio integration | Prototype; separate branch registry, not shared with REST |
 | Rust trace analyzer | Prototype; versioned Python JSONL contract aligned |
 | Versioned event schema (`1.0.0`) | Implemented; legacy records remain readable |
 | Document-oriented workspace and distributed operation | Design work; not current behavior |
-| Multi-process or multi-host coordination | Not implemented |
-| Authentication, authorization, sandboxing | Not provided |
+| Multiple organizations in one deployment | Not implemented; hosted API uses one configured organization |
+| Multiple API processes or multi-host coordination | Not supported; deploy one API instance |
+| Authenticated remote MCP transport | Not implemented; remote Streamable HTTP is rejected when `DATABASE_URL` is configured |
+| Agent identity, external tool authorization, or sandboxing | Not provided |
 | Semantic correctness of merged data | Not guaranteed |
 
 The current workspace is **key-value based**, not a document-oriented file workspace. A conflict is detected at key granularity: two agents changing different parts of the same string value still conflict if they write different values to the same key.
@@ -288,7 +323,7 @@ See [docs/CONCEPTS.md](docs/CONCEPTS.md) for the intended semantics and open des
 
 ## Security and data handling
 
-The hosted REST API authenticates human users with Supabase JWTs and checks their active membership in the configured organization. This is a single-organization deployment boundary, not general multi-tenant isolation. Cohort does not authenticate individual agents, authorize their external tool calls, or sandbox code. The local SQLite development mode intentionally bypasses API authentication and must not be exposed to the public internet.
+The hosted REST API authenticates human users with Supabase JWTs and checks their active membership in the configured organization. This applies to the hosted PostgreSQL API mode; it does not provide general multi-tenant isolation or agent-level identity. Cohort does not authorize agents' external tool calls or sandbox code. Local library and SQLite development usage do not provide an authenticated public API and must not be exposed to the internet.
 
 Event payloads and stored values may contain application data. Do not place credentials, secrets, or sensitive production data in the workspace or event log unless your application applies appropriate redaction, access controls, and retention policies.
 
