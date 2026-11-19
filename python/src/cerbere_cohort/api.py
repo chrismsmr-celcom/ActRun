@@ -31,6 +31,8 @@ from cerbere_cohort.postgres import PostgresPersistentWorkspace
 
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 DB_PATH = Path(os.getenv("COHORT_DB_PATH", "./data/cohort.db"))
+if DATABASE_URL and not DATABASE_URL.startswith(("postgres://", "postgresql://")):
+    raise RuntimeError("DATABASE_URL must be a PostgreSQL connection URL")
 if not DATABASE_URL:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 workspace = (
@@ -359,7 +361,8 @@ def get_settings():
         "require_leases": workspace._workspace._require_leases,
         "persistence": "postgresql" if DATABASE_URL.startswith(("postgres://", "postgresql://")) else "sqlite",
         "database_path": "managed" if DATABASE_URL.startswith(("postgres://", "postgresql://")) else str(DB_PATH),
-        "multi_process": DATABASE_URL.startswith(("postgres://", "postgresql://")),
+        "multi_process": False,
+        "database_transactions": DATABASE_URL.startswith(("postgres://", "postgresql://")),
         "authentication": "not_configured",
     }
 
