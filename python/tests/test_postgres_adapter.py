@@ -1,0 +1,25 @@
+from cerbere_cohort.postgres import _Connection
+
+
+def test_begin_immediate_becomes_transaction():
+    assert _Connection._translate("BEGIN IMMEDIATE") == "BEGIN"
+
+
+def test_sqlite_placeholders_and_rowid_are_translated():
+    sql = "SELECT * FROM events WHERE agent_id = ? ORDER BY rowid"
+    assert _Connection._translate(sql) == "SELECT * FROM events WHERE agent_id = %s ORDER BY seq"
+
+
+def test_insert_or_ignore_is_translated_to_postgres_upsert():
+    sql = "INSERT OR IGNORE INTO objects (hash, content) VALUES (?, ?)"
+    translated = _Connection._translate(sql)
+    assert translated.startswith("INSERT INTO objects")
+    assert "ON CONFLICT DO NOTHING" in translated
+    assert "%s" in translated
+
+
+def test_insert_or_replace_is_translated_to_postgres_upsert():
+    sql = "INSERT OR REPLACE INTO leases (resource_key, agent_id, expires_at, acquired_at, fencing_token) VALUES (?, ?, ?, ?, ?)"
+    translated = _Connection._translate(sql)
+    assert "ON CONFLICT (resource_key) DO UPDATE SET" in translated
+    assert "agent_id=EXCLUDED.agent_id" in translated
