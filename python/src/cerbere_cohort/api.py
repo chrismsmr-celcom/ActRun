@@ -25,12 +25,19 @@ from cerbere_cohort import (
     Resolution,
 )
 from cerbere_cohort.persistence import PersistentWorkspace
+from cerbere_cohort.postgres import PostgresPersistentWorkspace
 
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 DB_PATH = Path(os.getenv("COHORT_DB_PATH", "./data/cohort.db"))
-DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-workspace = PersistentWorkspace(
-    DB_PATH,
-    require_leases=os.getenv("COHORT_REQUIRE_LEASES", "false").lower() == "true",
+if not DATABASE_URL:
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+workspace = (
+    PostgresPersistentWorkspace(DATABASE_URL)
+    if DATABASE_URL.startswith(("postgres://", "postgresql://"))
+    else PersistentWorkspace(DB_PATH)
+)
+workspace._workspace._require_leases = (
+    os.getenv("COHORT_REQUIRE_LEASES", "false").lower() == "true"
 )
 _lock = threading.RLock()
 _branches: dict[str, dict[str, Any]] = {}
