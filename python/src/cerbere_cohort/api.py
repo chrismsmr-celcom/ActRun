@@ -285,3 +285,14 @@ def get_settings():
         "multi_process": False,
         "authentication": False,
     }
+
+
+def main():
+    """Run the local Cohort HTTP API."""
+    import uvicorn
+    uvicorn.run(
+        "cerbere_cohort.api:app",
+        host=os.getenv("COHORT_API_HOST", "127.0.0.1"),
+        port=int(os.getenv("COHORT_API_PORT", "8000")),
+        reload=False,
+    )
