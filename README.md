@@ -260,18 +260,22 @@ The MCP server persists its workspace through SQLite or PostgreSQL and stores it
 
 ```mermaid
 flowchart TD
-    A1["Agent A"] --> SDK["Python coordination API"]
-    A2["Agent B"] --> SDK
-    A3["Agent C"] --> MCP["MCP server (experimental)"]
-    MCP --> SDK
-    SDK --> WS["Workspace and isolated branches"]
-    WS --> MERGE["Three-way merge and conflict handling"]
-    WS --> LEASE["Lease manager and wait-for graph"]
-    WS --> LOG["Structured event log"]
-    WS --> STORE["Content store and snapshots"]
-    STORE --> DB["SQLite persistence (library) / PostgreSQL adapter (hosted API)"]
+    A1["Agent A"] --> LIB["Python library"]
+    A2["Agent B"] --> API["FastAPI REST service"]
+    A3["Agent C"] --> MCP["MCP server (stdio)"]
+    LIB --> CORE["Coordination engine"]
+    API --> REST["REST runtime and api_branches"]
+    MCP --> MCPR["MCP runtime and mcp_branches"]
+    REST --> CORE
+    MCPR --> CORE
+    CORE --> MERGE["Three-way merge and conflict handling"]
+    CORE --> LEASE["Lease manager and wait-for graph"]
+    CORE --> LOG["Structured event log"]
+    CORE --> STORE["Content store and snapshots"]
+    STORE --> DB["SQLite library storage / PostgreSQL hosted adapter"]
     LOG --> JSONL["JSONL export"]
-    JSONL -. "interoperability work remaining" .-> RUST["Rust trace analyzer"]
+    JSONL -. "prototype" .-> RUST["Rust trace analyzer"]
+    REST -. "separate branch registry" .- MCPR
 ```
 
 ### Repository layout
