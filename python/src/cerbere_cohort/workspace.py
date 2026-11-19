@@ -185,7 +185,12 @@ class Workspace:
                 branch_entries = {key: content_hash(value) for key, value in branch.current_data.items()}
                 result = detect_and_merge(base.entries, branch_entries, head.entries)
                 if result.success:
-                    return self._finalize(agent_id, branch, base, head, branch_entries, result.merged_data, {}, None)
+                    # Keep lease ownership stable from the final fencing check
+                    # through snapshot publication.
+                    with self._lease_manager.fencing_guard():
+                        self._validate_branch_leases(agent_id, branch, base)
+                        return self._finalize(agent_id, branch, base, head, branch_entries,
+                                              result.merged_data, {}, None)
 
                 conflicts = [self._build_conflict(key, agent_id, branch, base, head, branch_entries)
                              for key in result.conflicting_keys]
@@ -214,9 +219,10 @@ class Workspace:
                     continue  # HEAD a bougé pendant la décision : on refait la fusion
                 # The resolver ran outside the lock: the lease may have expired or
                 # been taken over while it was deciding. Revalidate before committing.
-                self._validate_branch_leases(agent_id, branch, base)
-                return self._finalize(agent_id, branch, base, head, branch_entries,
-                                      result.merged_data, decisions, resolver.name)
+                with self._lease_manager.fencing_guard():
+                    self._validate_branch_leases(agent_id, branch, base)
+                    return self._finalize(agent_id, branch, base, head, branch_entries,
+                                          result.merged_data, decisions, resolver.name)
 
         with self._lock:
             self._abort(agent_id, branch, self.head, [], [], getattr(resolver, "name", None), "head_kept_moving")

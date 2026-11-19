@@ -1,6 +1,7 @@
 # python/src/cerbere_cohort/lease.py
 import time
 import threading
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Dict, Optional, List
 from .events import CerbereCohortEvent
@@ -43,7 +44,13 @@ class LeaseManager:
         self._waiters: Dict[str, List[str]] = {}
         
         # Lock pour la thread-safety (utile si plusieurs agents en parallèle)
-        self._lock = threading.Lock()
+        self._lock = threading.RLock()
+
+    @contextmanager
+    def fencing_guard(self):
+        """Prevent lease ownership changes during a fenced workspace commit."""
+        with self._lock:
+            yield
     
     def acquire(
         self,
