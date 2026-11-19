@@ -348,7 +348,7 @@ def get_settings():
         "require_leases": workspace._workspace._require_leases,
         "persistence": "sqlite",
         "database_path": "managed" if DATABASE_URL else str(DB_PATH),
-        "multi_process": False,
+        "multi_process": DATABASE_URL.startswith(("postgres://", "postgresql://")),
         "authentication": False,
     }
 
@@ -358,7 +358,7 @@ def main():
     import uvicorn
     uvicorn.run(
         "cerbere_cohort.api:app",
-        host=os.getenv("COHORT_API_HOST", "127.0.0.1"),
-        port=int(os.getenv("COHORT_API_PORT", "8000")),
+        host=os.getenv("COHORT_API_HOST", "0.0.0.0"),
+        port=int(os.getenv("PORT", os.getenv("COHORT_API_PORT", "8000"))),
         reload=False,
     )
