@@ -506,6 +506,11 @@ def get_events(limit: int = 100, context: dict[str, Any] = Depends(require_works
     if limit < 1 or limit > 1000:
         raise HTTPException(422, "limit must be between 1 and 1000")
     events = workspace.get_events()
+    # Agent credentials are scoped to one agent identity. Event payloads can
+    # contain tool arguments and state changes, so do not expose other agents'
+    # event details through the shared workspace read scope.
+    if context.get("principal_type") == "agent":
+        events = [event for event in events if event.agent_id == context.get("agent_id")]
     return {"items": [_event_dict(e) for e in events[-limit:]][::-1]}
 
 
