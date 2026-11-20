@@ -9,7 +9,7 @@ description = "Persistent multi-agent coordination MCP server for Cerbere Cohort
 requires-python = ">=3.10"
 dependencies = [
     "mcp>=1.9.0,<2.0.0",
-    "cerbere-cohort",
+    "cerbere-cohort[postgres]",
 ]
 
 [project.scripts]

@@ -1,58 +1,56 @@
 <div align="center">
-    
+
 <img src="docs/cohort logo.png" alt="Cohort" width="120" />
 
-# cerbere-cohort
+# Cohort
 
-**Shared state and conflict-aware coordination for multi-agent systems.**
+**Coordinate your AI agents. Make every agent count.**
 
-Give agents isolated working branches, merge their changes without silently overwriting concurrent work, and keep a structured record of coordination decisions.
+Shared state, clear ownership, and conflict-aware collaboration for multi-agent systems.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Python](https://img.shields.io/badge/python-%3E%3D3.10-3776AB.svg)](python/)
-[![Rust](https://img.shields.io/badge/trace%20tool-Rust-black.svg)](crates/cerbere-cohort-trace/)
+[![Python](https://img.shields.io/badge/python-%3E%3D3.10-3776AB.svg](python/)
+
+[Quick start](#quick-start) · [Core capabilities](#what-you-can-build-with-cohort) · [MCP integration](#connect-through-mcp) · [Deployment](#deployment)
 
 </div>
 
-> **Experimental software — not production-ready.** The Python coordination core has automated tests for branching, conflict detection, resolution, replay, leases, and SQLite persistence. The MCP integration and Rust trace analyzer remain prototypes. APIs and event formats may change.
-
 ---
 
-## Why this exists
+## Give every agent a way to work together
 
-Multiple agents working against the same mutable state can overwrite one another, duplicate work, or leave operators unable to explain how the final state was produced.
+As soon as multiple agents work on the same project, coordination becomes a real engineering problem.
 
-Most agent frameworks focus on defining agents and workflows. cerbere-cohort explores a narrower problem: **how independent agents share and update state without hiding conflicting changes**.
+One agent updates a record while another changes it. Two agents repeat the same task. A worker continues from an outdated version of shared state. The result is wasted time, wasted tokens, and work that has to be repaired.
 
-## What it provides
+**Cohort gives agents a shared coordination layer.**
 
-The current Python implementation uses a key-value workspace.
+Agents can work in isolated branches, make changes independently, and bring those changes back through conflict-aware commits. Leases help coordinate access to shared resources, while a structured event log records what happened.
 
-| Capability | Current behavior |
+Use Cohort alongside the agent framework and tools you already work with.
+
+## What you can build with Cohort
+
+| Capability | What it does |
 | --- | --- |
-| Isolated branches | Each branch starts from a snapshot. Changes remain isolated until committed. |
-| Three-way merge | A commit compares the branch with its base and the current workspace head. |
-| Conflict detection | Divergent writes to the same key, including delete-versus-modify, are rejected rather than silently overwritten. |
-| Conflict resolution | Optional resolver strategies can decide conflicting values. Decisions and rationale are recorded in events. |
-| Content-addressed snapshots | JSON-compatible values are canonicalized and hashed; snapshot IDs include their content and parent history. |
-| Replay | A workspace can be reconstructed from its event log and content store. Replay verifies reconstructed snapshot IDs. |
-| Leases | Temporary resource leases support expiration, optional waiting, and ownership checks. |
-| Deadlock detection | A wait-for graph detects cycles before an agent waits indefinitely. |
-| SQLite persistence | `PersistentWorkspace` stores content objects, events, and active leases, then reconstructs state by replay on reload. |
-| MCP integration | An early stdio MCP server exposes workspace, branch, commit, lease, and event tools. |
-| Rust trace tool | An early CLI parses versioned JSONL events and reports basic counts and coordination metrics. |
+| **Shared workspace** | Give agents a common key-value state they can read and update. |
+| **Isolated branches** | Let agents work independently from a shared snapshot before committing changes. |
+| **Conflict detection** | Detect concurrent changes to the same key instead of silently overwriting one agent's work. |
+| **Controlled conflict resolution** | Apply an explicit resolver strategy and record the decision in the event history. |
+| **Resource leases** | Coordinate temporary ownership of shared keys and resources. |
+| **Deadlock detection** | Detect cycles in the wait-for graph so agents do not wait indefinitely. |
+| **Event history and replay** | Inspect coordination events and reconstruct workspace state from stored history. |
+| **Content-addressed snapshots** | Hash canonicalized values and verify reconstructed snapshot identities. |
+| **REST API** | Connect applications to workspace state, branches, commits, leases, and events. |
+| **MCP tools** | Experiment with workspace coordination through an MCP server and compatible local clients. |
 
-cerbere-cohort is intended to sit alongside an agent framework. It does not create agents or execute model calls.
+Cohort focuses on coordination: shared state, concurrent changes, ownership, and traceable decisions. Your agents and framework remain responsible for planning tasks, calling models, and executing external tools.
 
 ## Quick start
 
-### Requirements
+### 1. Install
 
-- Python 3.10 or newer
-- Rust stable, only if experimenting with the trace analyzer
-- SQLite is included with supported Python builds; no separate database server is required for the local persistence layer
-
-### Install the Python package
+Requires Python 3.10 or newer.
 
 From the repository root:
 
@@ -60,14 +58,16 @@ From the repository root:
 python -m pip install -e "./python"
 ```
 
-For development and tests:
+For development:
 
 ```bash
 python -m pip install -e "./python[dev]"
 python -m pytest python/tests
 ```
 
-### First example: conflicting writes
+### 2. Let agents work independently
+
+Each branch starts from a workspace snapshot. Agents can make changes without immediately modifying the shared head.
 
 ```python
 from cerbere_cohort import ConflictError, Workspace
@@ -92,9 +92,11 @@ print(workspace.head.data)
 # {"spec/auth": "written by agent A"}
 ```
 
-The second commit is rejected because both branches changed the same key differently. The workspace head remains unchanged by the rejected commit.
+The second commit is rejected because both agents changed the same key differently. The accepted state is preserved; the conflicting change must be handled explicitly.
 
-### Disjoint changes merge
+### 3. Merge independent work
+
+Changes to different keys can be committed without creating a conflict.
 
 ```python
 from cerbere_cohort import Workspace
@@ -115,9 +117,9 @@ print(workspace.head.data)
 # {"status": "in-progress", "owner": "agent-b"}
 ```
 
-### Resolve a conflict explicitly
+### 4. Choose how conflicts are resolved
 
-Resolvers are available from the `cerbere_cohort` package. For example, `PreferBranch`, `PreferHead`, and `PreferAgent` provide predefined strategies.
+Cohort provides resolver strategies including `PreferBranch`, `PreferHead`, and `PreferAgent`.
 
 ```python
 from cerbere_cohort import PreferBranch, Workspace
@@ -125,22 +127,23 @@ from cerbere_cohort import PreferBranch, Workspace
 workspace = Workspace()
 workspace.seed({"config": "v1"})
 
-a = workspace.create_branch("agent-a", "a")
-b = workspace.create_branch("agent-b", "b")
-a.set("config", "v2")
-b.set("config", "v3")
+agent_a = workspace.create_branch("agent-a", "a")
+agent_b = workspace.create_branch("agent-b", "b")
 
-workspace.commit("agent-a", a)
-workspace.commit("agent-b", b, resolver=PreferBranch())
+agent_a.set("config", "v2")
+agent_b.set("config", "v3")
+
+workspace.commit("agent-a", agent_a)
+workspace.commit("agent-b", agent_b, resolver=PreferBranch())
 
 print(workspace.head.data)
 ```
 
-A resolver is a policy choice, not proof that the resulting content is semantically correct. Review the selected strategy before using it in an application.
+A resolver makes the conflict policy explicit. It does not determine whether the selected value is semantically correct, so choose a strategy that fits your application.
 
-## Leases
+## Coordinate access with leases
 
-Leases are advisory unless the workspace is created with `require_leases=True`. When enforcement is enabled, a branch write requires the acting agent to hold a lease for the key.
+When several agents need the same resource, leases provide temporary ownership. Enable lease enforcement with `require_leases=True` to require ownership before a branch writes to a key.
 
 ```python
 from cerbere_cohort import LeaseError, Workspace
@@ -155,23 +158,11 @@ except LeaseError:
     branch.set("db/schema", {"version": 2})
 ```
 
-Waiting for a lease and deadlock detection:
+Leases also support waiting with a timeout. Cohort maintains a wait-for graph and raises `DeadlockError` when it detects a cycle.
 
-```python
-workspace.acquire_lease("agent-a", "resource-a", duration_seconds=60)
-workspace.acquire_lease(
-    "agent-b",
-    "resource-a",
-    wait=True,
-    timeout_seconds=5,
-)
-```
+## Keep a durable coordination history
 
-The second call waits for the resource to become available and raises an error on timeout. If the wait-for graph detects a cycle, it raises `DeadlockError`.
-
-## SQLite persistence
-
-The persistent wrapper is currently imported from its module rather than the package root:
+The local persistent workspace stores content objects, events, and active leases in SQLite. On reopening, it reconstructs state from the event log and validates snapshot IDs.
 
 ```python
 from cerbere_cohort.persistence import PersistentWorkspace
@@ -186,117 +177,127 @@ with PersistentWorkspace("workspace.db") as workspace:
     workspace.export_events_jsonl("events.jsonl")
 ```
 
-On reopening the database, the workspace is reconstructed from the stored objects and event log. Replay validates object hashes and snapshot IDs.
+Events can be inspected through the Python API and exported as JSONL for further analysis. The repository also includes a Rust trace CLI for basic analysis of versioned event logs.
 
-**Operational note:** this persistence implementation is local SQLite storage. It is not a distributed database or a multi-host coordination service.
+## Connect through MCP
 
-## Event log and trace tooling
+The MCP integration lives in `integrations/mcp-server`. It exposes tools for workspace state, branches, branch values, commits, leases, and events.
 
-The Python API exposes structured events through `Workspace.get_events()`. Each event currently contains:
-
-- `schema_version` (`1.0.0`)
-- `event_id`
-- `timestamp`
-- `agent_id`
-- `action`
-- `payload`
-- optional `metadata`
-
-The JSONL exporter writes one serialized event per line.
-
-The Rust crate is named `cerbere-cohort-trace`:
-
-```bash
-cargo run -p cerbere-cohort-trace -- example-trace.jsonl
-```
-
-The Python event model, JSON Schema, sample JSONL log, and Rust parser now use the same `1.0.0` envelope. The Python reader and Rust parser also accept legacy records that omit `schema_version`, treating them as `1.0.0`. New events always serialize the version field. The current conflict metric is calculated as conflict events divided by successful plus aborted commit attempts. The analyzer remains an early prototype; run it against your own exported logs before depending on its metrics.
-
-## MCP server (experimental)
-
-An early stdio MCP server is located in `integrations/mcp-server`. It exposes tools for reading workspace state, creating branches, writing to a branch, committing, acquiring and releasing leases, and reading events.
-
-The server package declares the `cerbere-cohort-mcp` entry point. Install and run it from the integration directory after installing the local Python package:
+Install and run from the repository root:
 
 ```bash
 python -m pip install -e "./python"
 cd integrations/mcp-server
 python -m pip install -e .
+```
+
+Run with stdio for a local MCP client:
+
+```bash
+cerbere-cohort-mcp --transport stdio
+```
+
+For local development, the server also supports Streamable HTTP on `127.0.0.1:8765` by default:
+
+```bash
 cerbere-cohort-mcp
 ```
 
-The server currently keeps its workspace and branch registry in process memory. It is an early integration and has not been established as a durable, multi-user MCP service. Review the implementation and test it with your MCP client before relying on it.
+The MCP integration is an early implementation. Its branch registry is currently separate from the REST API branch registry. When `DATABASE_URL` is configured, the server requires stdio; authenticated remote MCP transport is not yet available. Do not expose the local HTTP transport publicly.
 
-## Architecture
+## Use the interface that fits your setup
+
+| Interface | Use it for |
+| --- | --- |
+| **Python library** | Add coordination directly to Python agent workflows and applications. |
+| **REST API** | Connect a frontend or service to workspace state and coordination operations. |
+| **MCP server** | Expose Cohort coordination tools to a local MCP-compatible client. |
+| **SQLite persistence** | Keep local workspace state and event history between runs. |
+| **PostgreSQL adapter** | Run the hosted API with PostgreSQL-backed persistence. |
+
+The REST service is built with FastAPI. In hosted PostgreSQL mode, it validates Supabase JWTs and checks membership in the deployment's configured organization.
+
+## Deployment
+
+- [Deploy the SaaS beta](docs/DEPLOYMENT.md) — Vercel, Render, Supabase, environment variables, and verification.
+- [Self-host Cohort Community](docs/SELF_HOSTING.md) — Docker Compose with local SQLite.
+- [Traction measurement](docs/TRACTION.md) — GitHub clone archive, opt-in installation telemetry, and product adoption metrics.
+
+## How Cohort works
+
+At a high level, agents interact with a coordination engine through the Python library, REST API, or MCP integration.
 
 ```mermaid
 flowchart TD
-    A1["Agent A"] --> SDK["Python coordination API"]
-    A2["Agent B"] --> SDK
-    A3["Agent C"] --> MCP["MCP server (experimental)"]
-    MCP --> SDK
-    SDK --> WS["Workspace and isolated branches"]
-    WS --> MERGE["Three-way merge and conflict handling"]
-    WS --> LEASE["Lease manager and wait-for graph"]
-    WS --> LOG["Structured event log"]
-    WS --> STORE["Content store and snapshots"]
-    STORE --> DB["SQLite persistence (optional)"]
-    LOG --> JSONL["JSONL export"]
-    JSONL -. "interoperability work remaining" .-> RUST["Rust trace analyzer"]
+    A["Agent A"] --> P["Python library"]
+    B["Agent B"] --> R["REST API"]
+    C["Agent C"] --> M["MCP server"]
+    P --> E["Coordination engine"]
+    R --> E
+    M --> E
+    E --> BR["Branches and three-way merge"]
+    E --> L["Leases and deadlock detection"]
+    E --> S["Snapshots and content store"]
+    E --> H["Structured event history"]
+    H --> J["JSONL export and trace analysis"]
 ```
 
-### Repository layout
+### Repository structure
 
 ```text
 .
 ├── python/
-│   ├── src/cerbere_cohort/          # Python coordination library
-│   └── tests/               # Python test suite
+│   ├── src/cerbere_cohort/       # Python coordination library
+│   └── tests/                    # Python test suite
 ├── crates/
-│   └── cerbere-cohort-trace/        # Rust JSONL trace CLI (prototype)
+│   └── cerbere-cohort-trace/     # Rust JSONL trace CLI
 ├── integrations/
-│   └── mcp-server/          # Experimental stdio MCP server
-├── schemas/                 # Event schema draft
-├── examples/                # Runnable examples
-└── docs/                    # Design notes and concepts
+│   └── mcp-server/               # MCP server
+├── schemas/                      # Event schema
+├── examples/                     # Runnable examples
+└── docs/                         # Guides and design notes
 ```
 
-## Current status and limitations
+## Current version
 
-| Component | Status |
-| --- | --- |
-| Key-value workspace and isolated branches | Implemented; automated tests present |
-| Three-way merge and conflict detection | Implemented; automated tests present |
-| Resolver strategies and recorded decisions | Implemented; automated tests present |
-| Content hashing and deterministic snapshot IDs | Implemented; automated tests present |
-| Event-log replay and replay validation | Implemented; automated tests present |
-| Leases and wait-for deadlock detection | Implemented; automated tests present |
-| SQLite persistence and JSONL export | Implemented; automated tests present |
-| MCP stdio integration | Prototype; not yet established as production-ready |
-| Rust trace analyzer | Prototype; versioned Python JSONL contract aligned |
-| Versioned event schema (`1.0.0`) | Implemented; legacy records remain readable |
-| Document-oriented workspace and distributed operation | Design work; not current behavior |
-| Multi-process or multi-host coordination | Not implemented |
-| Authentication, authorization, sandboxing | Not provided |
-| Semantic correctness of merged data | Not guaranteed |
+Cohort is under active development. The current implementation includes the key-value workspace, isolated branches, three-way merge, conflict detection and resolver strategies, leases, wait-for deadlock detection, content-addressed snapshots, event replay, SQLite persistence, a PostgreSQL adapter for the hosted API, and a FastAPI REST service.
 
-The current workspace is **key-value based**, not a document-oriented file workspace. A conflict is detected at key granularity: two agents changing different parts of the same string value still conflict if they write different values to the same key.
+A few implementation details matter when evaluating the current release:
 
-## Design notes
+- The hosted API is configured for one organization per deployment and one API instance. It is not yet a general multi-tenant or horizontally scalable coordination service.
+- The MCP server uses a separate branch registry from the REST API.
+- The MCP server requires stdio when `DATABASE_URL` is configured; authenticated remote MCP transport is not implemented.
+- The workspace is key-value based. Conflict detection operates at key granularity.
+- The Rust trace analyzer is an early tool for basic JSONL analysis.
+- Cohort coordinates shared state; it does not provide agent identity, external tool authorization, or code sandboxing.
+- Conflict resolution policies do not guarantee semantic correctness of application data.
 
-See [docs/CONCEPTS.md](docs/CONCEPTS.md) for the intended semantics and open design questions. That document includes future directions that are not all implemented. Use the status table above and the source code as the reference for current behavior.
+The hosted API's route definitions and request/response models in the source code are the reference for exact API behavior. Run the service to access FastAPI's interactive documentation at `/docs`.
+
+## What's next
+
+We are working toward stronger coordination across agent runtimes and deployment environments, including:
+
+- Fencing-token enforcement at the storage boundary to reject writes from stale lease holders.
+- A unified branch and coordination model across REST and MCP.
+- Agent identity and permission controls.
+- Document-oriented workspaces and richer shared resources.
+- Multi-organization deployments and multi-instance coordination.
+- Broader framework integrations and more useful trace analytics.
+
+These are development directions, not claims about features already shipped. See [docs/CONCEPTS.md](docs/CONCEPTS.md) for design notes and open questions.
 
 ## Security and data handling
 
-cerbere-cohort is not a security boundary. It does not authenticate agents, enforce tenant isolation, authorize tool access, or sandbox code.
+The hosted REST API authenticates human users with Supabase JWTs and checks active membership in its configured organization. This does not provide agent-level identity, general multi-tenant isolation, external tool authorization, or code sandboxing.
 
-Event payloads and stored values may contain application data. Do not place credentials, secrets, or sensitive production data in the workspace or event log unless your application applies appropriate redaction, access controls, and retention policies.
+Local library and SQLite development usage do not provide an authenticated public API. Do not expose them directly to the internet. Workspace values and event payloads may contain application data; apply appropriate redaction, access controls, and retention policies before storing sensitive information.
 
-Please read [SECURITY.md](SECURITY.md) before reporting a vulnerability.
+Read [SECURITY.md](SECURITY.md) before reporting a vulnerability.
 
 ## Contributing
 
-Contributions and concrete failure reports are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request. Reports describing the number of agents, shared state, operations, expected behavior, and observed failure are especially useful.
+Contributions and concrete failure reports are welcome. Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening a pull request. Useful reports include the number of agents, the shared state involved, the operations performed, and the expected versus observed behavior.
 
 ## License
 

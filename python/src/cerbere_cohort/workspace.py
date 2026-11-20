@@ -213,8 +213,8 @@ class Workspace:
             with self._lock, self._lease_manager.fencing_guard():
                 if self._head_version != head.version_id:
                     continue  # HEAD a bougé pendant la décision : on refait la fusion
-                # Le résolveur s'exécute hors verrou : le lease peut avoir expiré
-                # ou avoir été repris pendant sa décision. Revalider juste avant commit.
+                # The resolver ran outside the lock: the lease may have expired or
+                # been taken over while it was deciding. Revalidate before committing.
                 self._validate_branch_leases(agent_id, branch, base)
                 return self._finalize(agent_id, branch, base, head, branch_entries,
                                       result.merged_data, decisions, resolver.name)
@@ -230,7 +230,7 @@ class Workspace:
 
     def _validate_branch_leases(self, agent_id: str, branch: Branch, base: Snapshot) -> None:
         """Reject commits whose write leases expired or were replaced."""
-        if not self._require_leases or branch._lease_exempt:
+        if not self._require_leases or getattr(branch, "_lease_exempt", False):
             return
         changed_keys = {key for key in set(base.data) | set(branch.current_data)
                         if base.data.get(key) != branch.current_data.get(key)}

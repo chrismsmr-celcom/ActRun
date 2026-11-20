@@ -38,7 +38,6 @@ def test_expired_lease_holder_cannot_commit_after_reacquisition(tmp_path):
         assert exc_info.value.code == "lease_fenced"
         assert workspace.head.data.get("shared/document") is None
 
-
 def test_fencing_is_revalidated_after_slow_conflict_resolver():
     workspace = Workspace(require_leases=True)
     workspace.seed({"shared/document": "base"})

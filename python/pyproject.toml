@@ -9,14 +9,23 @@ version = "0.1.0"
 description = "Shared-state and conflict-aware coordination for multi-agent systems."
 requires-python = ">=3.10"
 dependencies = [
-    "pydantic>=2.0.0",  # Pour la validation robuste des événements
+    "pydantic>=2.0.0",
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "PyJWT[crypto]>=2.10.0",
 ]
 
 [project.optional-dependencies]
+postgres = [
+    "psycopg[binary]>=3.2.0",
+]
 dev = [
     "pytest>=7.0.0",
-    "ruff>=0.1.0",  # Pour le formatage et le linting
+    "ruff>=0.1.0",
 ]
+
+[project.scripts]
+cerbere-cohort-api = "cerbere_cohort.api:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
