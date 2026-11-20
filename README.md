@@ -29,6 +29,8 @@ Agents can work in isolated branches, make changes independently, and bring thos
 
 Use Cohort alongside the agent framework and tools you already work with.
 
+![Cerbere Cohort Coordination Overview](./assets/coordination-sketch.png)
+
 ## What you can build with Cohort
 
 | Capability | What it does |
