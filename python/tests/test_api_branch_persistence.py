@@ -188,3 +188,38 @@ def test_postgres_api_branch_schema_upgrade_runs_after_create():
     alter_index = next(i for i, sql in enumerate(conn.statements) if sql.startswith("ALTER TABLE"))
     assert create_index < alter_index
     assert "ADD COLUMN IF NOT EXISTS fencing_tokens_json" in conn.statements[alter_index]
+
+
+def test_api_branch_write_rebinds_after_lease_mutation(tmp_path, monkeypatch):
+    from fastapi import HTTPException
+
+    store = PersistentWorkspace(tmp_path / "api-lease-rebind.db", require_leases=True)
+    _ensure_api_test_schema(store)
+    monkeypatch.setattr(api, "workspace", store)
+    monkeypatch.setattr(api, "_branches", {})
+    context = {"principal_type": "agent", "agent_id": "agent-a"}
+    created = api.create_branch(api.BranchCreate(agent_id="agent-a", name="work"), context)
+    store.acquire_lease("agent-a", "record/1", duration_seconds=60)
+
+    written = api.write_branch(
+        created["id"],
+        api.BranchWrite(key="record/1", value={"status": "ready"}),
+        context,
+    )
+    assert written["ok"] is True
+    committed = api.commit_branch(created["id"], context)
+    assert committed["ok"] is True
+    assert store.head.data["record/1"] == {"status": "ready"}
+    store.close()
+
+
+def _ensure_api_test_schema(store):
+    store._conn.execute(
+        """CREATE TABLE api_branches (
+            branch_id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, branch_name TEXT NOT NULL,
+            base_version TEXT NOT NULL, current_data_json TEXT NOT NULL, intents_json TEXT NOT NULL,
+            fencing_tokens_json TEXT NOT NULL DEFAULT '{}', status TEXT NOT NULL,
+            conflicting_keys_json TEXT NOT NULL, created_at TEXT NOT NULL
+        )"""
+    )
+    store._conn.commit()
