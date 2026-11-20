@@ -204,3 +204,39 @@ def authenticate_agent_token(token: str, organization_id: str) -> dict[str, Any]
         "agent_id": row["agent_id"] if isinstance(row, dict) else row[2],
         "scopes": scopes,
     }
+
+
+def require_workspace_scope(required_scope: str):
+    """Build a dependency accepting either a Supabase member or scoped agent token."""
+    if required_scope not in AGENT_SCOPES:
+        raise ValueError(f"Unsupported Cohort scope: {required_scope}")
+
+    def dependency(
+        authorization: str | None = Header(default=None),
+        x_organization_id: str | None = Header(default=None, alias="X-Organization-ID"),
+    ) -> dict[str, Any]:
+        if not os.getenv("DATABASE_URL", "").strip():
+            context = {"user_id": "local", "organization_id": "local", "role": "owner"}
+        else:
+            if not authorization or not authorization.startswith("Bearer "):
+                raise HTTPException(status_code=401, detail="Bearer access token required")
+            bearer = authorization[7:].strip()
+            if bearer.startswith("coh_"):
+                if not x_organization_id:
+                    raise HTTPException(status_code=400, detail="X-Organization-ID header is required")
+                context = authenticate_agent_token(bearer, x_organization_id)
+                if required_scope not in context["scopes"]:
+                    raise HTTPException(status_code=403, detail="Agent credential lacks required scope")
+            else:
+                context = require_workspace_member(authorization, x_organization_id)
+                if required_scope.endswith(":write") and context.get("role") not in {"owner", "admin", "member"}:
+                    raise HTTPException(status_code=403, detail="Workspace write permission required")
+        return context
+
+    return dependency
+
+
+require_workspace_read_access = require_workspace_scope("workspace:read")
+require_workspace_write_access = require_workspace_scope("workspace:write")
+require_lease_read_access = require_workspace_scope("leases:read")
+require_lease_write_access = require_workspace_scope("leases:write")
