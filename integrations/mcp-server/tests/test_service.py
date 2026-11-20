@@ -105,6 +105,7 @@ def test_mcp_rejects_commit_after_lease_takeover(tmp_path):
     service.create_branch("agent-a", "work")
     service.acquire_lease("agent-a", "record/1", 30)
     service.write_branch("agent-a", "work", "record/1", {"value": "stale"})
+    service.workspace.release_lease("agent-a", "record/1")
     service.workspace.acquire_lease("agent-b", "record/1", 30)
     with pytest.raises(LeaseError) as exc:
         service.commit_branch("agent-a", "work")
