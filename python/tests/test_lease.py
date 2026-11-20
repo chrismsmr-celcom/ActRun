@@ -104,3 +104,17 @@ def _swallow(fn):
         fn()
     except Exception:  # noqa: BLE001
         pass
+
+
+@pytest.mark.parametrize("duration", [0, -1, float("inf"), float("nan")])
+def test_invalid_lease_duration_is_rejected(duration):
+    lm = LeaseManager()
+    with pytest.raises(LeaseError) as exc:
+        lm.acquire("agent-a", "resource", duration_seconds=duration)
+    assert exc.value.code == "invalid_lease_duration"
+
+
+def test_expiry_boundary_is_inclusive():
+    from cerbere_cohort.lease import Lease
+    lease = Lease("agent-a", "resource", expires_at=time.time(), acquired_at=time.time())
+    assert lease.is_expired()
