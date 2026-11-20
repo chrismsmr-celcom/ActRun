@@ -211,6 +211,9 @@ class CohortService:
         self._assert_agent(agent_id)
         with self._lock:
             branch = self._branch(agent_id, branch_name)
+            # PersistentWorkspace replays state after each mutation; rebind the
+            # branch before checking its lease so it sees the current lease manager.
+            branch._lease_manager = self.workspace._workspace._lease_manager
             branch.set(key, value, intent=intent)
             self._persist_branch(agent_id, branch)
             return {"updated": True, "key": key, "branch_name": branch_name}
@@ -221,6 +224,7 @@ class CohortService:
         self._assert_agent(agent_id)
         with self._lock:
             branch = self._branch(agent_id, branch_name)
+            branch._lease_manager = self.workspace._workspace._lease_manager
             branch.delete(key, intent=intent)
             self._persist_branch(agent_id, branch)
             return {"deleted": True, "key": key, "branch_name": branch_name}
