@@ -122,7 +122,7 @@ class _Connection:
         cursor = self._db.execute(self._translate(sql, self.schema), params)
         if sql.strip().upper() == "BEGIN IMMEDIATE":
             self._in_txn = True
-            self._db.execute("SELECT pg_advisory_xact_lock(hashtext('cerbere-cohort-runtime'))")
+            self._db.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"cerbere-cohort:{self.schema}",))
         return cursor
 
     def execute(self, sql: str, params=()):
