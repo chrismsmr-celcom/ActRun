@@ -64,6 +64,7 @@ class CohortService:
         *,
         authenticated_agent_id: str | None = None,
         require_leases: bool | None = None,
+        organization_id: str | None = None,
     ):
         database_url = os.getenv('DATABASE_URL', '').strip()
         self.authenticated_agent_id = (authenticated_agent_id or '').strip() or None
@@ -71,7 +72,7 @@ class CohortService:
             require_leases = os.getenv('COHORT_REQUIRE_LEASES', 'true' if database_url else 'false').lower() in {'1', 'true', 'yes', 'on'}
         if database_url.startswith(('postgres://', 'postgresql://')):
             self.db_path = None
-            self.workspace = PostgresPersistentWorkspace(database_url, require_leases=require_leases)
+            self.workspace = PostgresPersistentWorkspace(database_url, require_leases=require_leases, organization_id=organization_id)
         else:
             if db_path is None:
                 raise ValueError('Set DATABASE_URL or provide a local SQLite --db path')
@@ -93,9 +94,12 @@ class CohortService:
             )
             """
         )
-        columns = {row['name'] for row in self._db.execute('PRAGMA table_info(mcp_branches)')} if self.db_path is not None else {row['column_name'] for row in self._db.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'mcp_branches'")}
-        if 'fencing_tokens_json' not in columns:
-            self._db.execute("ALTER TABLE mcp_branches ADD COLUMN fencing_tokens_json TEXT NOT NULL DEFAULT '{}'")
+        if self.db_path is not None:
+            columns = {row['name'] for row in self._db.execute('PRAGMA table_info(mcp_branches)')}
+            if 'fencing_tokens_json' not in columns:
+                self._db.execute("ALTER TABLE mcp_branches ADD COLUMN fencing_tokens_json TEXT NOT NULL DEFAULT '{}'")
+        else:
+            self._db.execute("ALTER TABLE mcp_branches ADD COLUMN IF NOT EXISTS fencing_tokens_json TEXT NOT NULL DEFAULT '{}'")
         self._db.commit()
         self._branches: dict[tuple[str, str], Branch] = {}
         self._restore_branches()
