@@ -191,8 +191,6 @@ def test_postgres_api_branch_schema_upgrade_runs_after_create():
 
 
 def test_api_branch_write_rebinds_after_lease_mutation(tmp_path, monkeypatch):
-    from fastapi import HTTPException
-
     store = PersistentWorkspace(tmp_path / "api-lease-rebind.db", require_leases=True)
     _ensure_api_test_schema(store)
     monkeypatch.setattr(api, "workspace", store)
