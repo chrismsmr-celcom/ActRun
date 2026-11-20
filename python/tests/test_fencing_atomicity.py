@@ -15,6 +15,7 @@ def test_lease_takeover_cannot_interleave_between_validation_and_finalize(monkey
 
     finalize_entered = threading.Event()
     allow_finalize = threading.Event()
+    takeover_started = threading.Event()
     takeover_finished = threading.Event()
     original_finalize = workspace._finalize
 
@@ -34,6 +35,7 @@ def test_lease_takeover_cannot_interleave_between_validation_and_finalize(monkey
             commit_errors.append(exc)
 
     def takeover():
+        takeover_started.set()
         workspace.release_lease("agent-a", "shared/document")
         replacement = workspace.acquire_lease(
             "agent-b", "shared/document", duration_seconds=30
@@ -47,6 +49,7 @@ def test_lease_takeover_cannot_interleave_between_validation_and_finalize(monkey
 
     takeover_thread = threading.Thread(target=takeover)
     takeover_thread.start()
+    assert takeover_started.wait(timeout=2), "takeover thread never started"
     time.sleep(0.05)
 
     # Ownership must remain stable until the validated commit has finalized.
