@@ -26,7 +26,6 @@ from cerbere_cohort.telemetry import send_installation_ping
 from cerbere_cohort.auth import (
     configure_membership_db,
     require_workspace_member,
-    require_workspace_writer,
     _decode_access_token,
     require_workspace_read_access,
     require_workspace_write_access,
@@ -182,6 +181,15 @@ def _event_dict(event):
     return event.model_dump(mode="json")
 
 
+def _agent_owns(context: dict[str, Any], resource_agent_id: str) -> bool:
+    return context.get("principal_type") != "agent" or context.get("agent_id") == resource_agent_id
+
+
+def _require_agent_identity(context: dict[str, Any], requested_agent_id: str) -> None:
+    if context.get("principal_type") == "agent" and context.get("agent_id") != requested_agent_id:
+        raise HTTPException(status_code=403, detail="Agent credentials cannot act as another agent")
+
+
 def _branch_summary(branch_id: str, item: dict[str, Any]) -> dict[str, Any]:
     branch = item["branch"]
     return {
@@ -250,8 +258,8 @@ def get_traction_metrics():
     }
 
 
-@app.get("/api/overview", dependencies=[Depends(require_workspace_member)])
-def overview():
+@app.get("/api/overview")
+def overview(context: dict[str, Any] = Depends(require_workspace_read_access)):
     events = workspace.get_events()
     leases = workspace._workspace._lease_manager.get_active_leases()
     successful = sum(e.action == "workspace.commit" for e in events)
@@ -269,18 +277,18 @@ def overview():
     }
 
 
-@app.get("/api/branches", dependencies=[Depends(require_workspace_member)])
-def list_branches():
+@app.get("/api/branches")
+def list_branches(context: dict[str, Any] = Depends(require_workspace_read_access)):
     with _lock:
-        return {"items": [_branch_summary(k, v) for k, v in _branches.items()]}
+        return {"items": [_branch_summary(k, v) for k, v in _branches.items() if _agent_owns(context, v["agent_id"])]}
 
 
-@app.get("/api/branches/{branch_id}/diff", dependencies=[Depends(require_workspace_member)])
-def get_branch_diff(branch_id: str):
+@app.get("/api/branches/{branch_id}/diff")
+def get_branch_diff(branch_id: str, context: dict[str, Any] = Depends(require_workspace_read_access)):
     """Preview every key changed by a branch against its base and current HEAD."""
     with _lock:
         item = _branches.get(branch_id)
-        if not item:
+        if not item or not _agent_owns(context, item["agent_id"]):
             raise HTTPException(404, "Branch not found")
         branch = item["branch"]
         base = workspace._workspace._snapshots.get(branch.base_version)
@@ -325,8 +333,9 @@ def get_branch_diff(branch_id: str):
         }
 
 
-@app.post("/api/branches", status_code=201, dependencies=[Depends(require_workspace_write_access)])
-def create_branch(body: BranchCreate):
+@app.post("/api/branches", status_code=201)
+def create_branch(body: BranchCreate, context: dict[str, Any] = Depends(require_workspace_write_access)):
+    _require_agent_identity(context, body.agent_id)
     branch_id = str(uuid.uuid4())
     try:
         branch = workspace.create_branch(body.agent_id, body.name)
@@ -344,11 +353,11 @@ def create_branch(body: BranchCreate):
     return _branch_summary(branch_id, _branches[branch_id])
 
 
-@app.put("/api/branches/{branch_id}/state", dependencies=[Depends(require_workspace_writer)])
-def write_branch(branch_id: str, body: BranchWrite):
+@app.put("/api/branches/{branch_id}/state")
+def write_branch(branch_id: str, body: BranchWrite, context: dict[str, Any] = Depends(require_workspace_write_access)):
     with _lock:
         item = _branches.get(branch_id)
-        if not item or item["status"] != "open":
+        if not item or item["status"] != "open" or not _agent_owns(context, item["agent_id"]):
             raise HTTPException(404, "Open branch not found")
         try:
             item["branch"].set(body.key, body.value, intent=body.intent)
@@ -358,11 +367,11 @@ def write_branch(branch_id: str, body: BranchWrite):
     return {"ok": True, "branch_id": branch_id, "key": body.key}
 
 
-@app.post("/api/branches/{branch_id}/commit", dependencies=[Depends(require_workspace_writer)])
-def commit_branch(branch_id: str):
+@app.post("/api/branches/{branch_id}/commit")
+def commit_branch(branch_id: str, context: dict[str, Any] = Depends(require_workspace_write_access)):
     with _lock:
         item = _branches.get(branch_id)
-        if not item or item["status"] != "open":
+        if not item or item["status"] != "open" or not _agent_owns(context, item["agent_id"]):
             raise HTTPException(404, "Open branch not found")
         try:
             snapshot = workspace.commit(item["agent_id"], item["branch"])
@@ -383,11 +392,11 @@ def commit_branch(branch_id: str):
             }
 
 
-@app.get("/api/branches/{branch_id}/conflict", dependencies=[Depends(require_workspace_member)])
-def get_branch_conflict(branch_id: str):
+@app.get("/api/branches/{branch_id}/conflict")
+def get_branch_conflict(branch_id: str, context: dict[str, Any] = Depends(require_workspace_read_access)):
     with _lock:
         item = _branches.get(branch_id)
-        if not item or item["status"] != "open":
+        if not item or item["status"] != "open" or not _agent_owns(context, item["agent_id"]):
             raise HTTPException(404, "Open branch not found")
         keys = item.get("conflicting_keys", [])
         if not keys:
@@ -416,11 +425,11 @@ def get_branch_conflict(branch_id: str):
         }
 
 
-@app.post("/api/branches/{branch_id}/resolve", dependencies=[Depends(require_workspace_writer)])
-def resolve_branch(branch_id: str, body: ResolveRequest):
+@app.post("/api/branches/{branch_id}/resolve")
+def resolve_branch(branch_id: str, body: ResolveRequest, context: dict[str, Any] = Depends(require_workspace_write_access)):
     with _lock:
         item = _branches.get(branch_id)
-        if not item or item["status"] != "open":
+        if not item or item["status"] != "open" or not _agent_owns(context, item["agent_id"]):
             raise HTTPException(404, "Open branch not found")
         if not item.get("conflicting_keys"):
             raise HTTPException(409, "Branch has no recorded conflict")
@@ -456,8 +465,8 @@ def resolve_branch(branch_id: str, body: ResolveRequest):
             raise HTTPException(409, detail={"message": str(exc), "conflicting_keys": list(exc.conflicting_keys)}) from exc
 
 
-@app.get("/api/state", dependencies=[Depends(require_workspace_member)])
-def get_state():
+@app.get("/api/state")
+def get_state(context: dict[str, Any] = Depends(require_workspace_read_access)):
     head = workspace.head
     return {
         "head": head.version_id,
@@ -469,16 +478,16 @@ def get_state():
     }
 
 
-@app.get("/api/events", dependencies=[Depends(require_workspace_member)])
-def get_events(limit: int = 100):
+@app.get("/api/events")
+def get_events(limit: int = 100, context: dict[str, Any] = Depends(require_workspace_read_access)):
     if limit < 1 or limit > 1000:
         raise HTTPException(422, "limit must be between 1 and 1000")
     events = workspace.get_events()
     return {"items": [_event_dict(e) for e in events[-limit:]][::-1]}
 
 
-@app.get("/api/leases", dependencies=[Depends(require_workspace_member)])
-def get_leases():
+@app.get("/api/leases")
+def get_leases(context: dict[str, Any] = Depends(require_lease_read_access)):
     leases = workspace._workspace._lease_manager.get_active_leases()
     return {
         "items": [
@@ -490,12 +499,14 @@ def get_leases():
                 "fencing_token": lease.fencing_token,
             }
             for lease in leases.values()
+            if _agent_owns(context, lease.agent_id)
         ]
     }
 
 
-@app.post("/api/leases", status_code=201, dependencies=[Depends(require_workspace_writer)])
-def acquire_lease(body: LeaseRequest):
+@app.post("/api/leases", status_code=201)
+def acquire_lease(body: LeaseRequest, context: dict[str, Any] = Depends(require_lease_write_access)):
+    _require_agent_identity(context, body.agent_id)
     try:
         lease = workspace.acquire_lease(body.agent_id, body.key, body.duration_seconds)
     except LeaseError as exc:
@@ -509,8 +520,9 @@ def acquire_lease(body: LeaseRequest):
     }
 
 
-@app.delete("/api/leases/{key:path}", dependencies=[Depends(require_workspace_writer)])
-def release_lease(key: str, agent_id: str):
+@app.delete("/api/leases/{key:path}")
+def release_lease(key: str, agent_id: str, context: dict[str, Any] = Depends(require_lease_write_access)):
+    _require_agent_identity(context, agent_id)
     try:
         workspace.release_lease(agent_id, key)
     except LeaseError as exc:
