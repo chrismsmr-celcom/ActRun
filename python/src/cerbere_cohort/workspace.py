@@ -87,6 +87,7 @@ class Branch:
         self._require_leases = require_leases
         self.intents: Dict[str, str] = {}  # clé -> pourquoi (provenance, jamais utilisé pour décider)
         self.fencing_tokens: Dict[str, int] = {}
+        self._lease_exempt = False
 
     def _check_write_allowed(self, key: str, verb: str) -> None:
         if self._require_leases and not self._lease_manager.check_lease(self._agent_id, key):
@@ -178,7 +179,7 @@ class Workspace:
         pendant ce temps, la fusion est refaite contre le nouveau HEAD (CONCEPTS §4).
         """
         for _ in range(max_retries + 1):
-            with self._lock:
+            with self._lock, self._lease_manager.fencing_guard():
                 head = self.head
                 base = self._snapshots[branch.base_version]
                 self._validate_branch_leases(agent_id, branch, base)
@@ -209,7 +210,7 @@ class Workspace:
 
             decisions = self._decide(agent_id, branch, head, resolver, conflicts)  # hors verrou
 
-            with self._lock:
+            with self._lock, self._lease_manager.fencing_guard():
                 if self._head_version != head.version_id:
                     continue  # HEAD a bougé pendant la décision : on refait la fusion
                 # The resolver ran outside the lock: the lease may have expired or
