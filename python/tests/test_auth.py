@@ -231,3 +231,27 @@ def test_scope_dependency_keeps_supabase_member_auth(monkeypatch):
         x_organization_id="11111111-1111-4111-8111-111111111111",
     )
     assert result is expected
+
+
+
+def test_agent_resource_ownership_rejects_cross_agent_access():
+    from cerbere_cohort.api import _agent_owns, _require_agent_identity
+
+    owner = {"principal_type": "agent", "agent_id": "worker-a"}
+    assert _agent_owns(owner, "worker-a") is True
+    assert _agent_owns(owner, "worker-b") is False
+
+    try:
+        _require_agent_identity(owner, "worker-b")
+    except HTTPException as exc:
+        assert exc.status_code == 403
+    else:
+        raise AssertionError("An agent must not impersonate another agent")
+
+
+def test_workspace_member_can_manage_any_agent_resource():
+    from cerbere_cohort.api import _agent_owns, _require_agent_identity
+
+    member = {"user_id": "user-1", "role": "member"}
+    assert _agent_owns(member, "worker-b") is True
+    assert _require_agent_identity(member, "worker-b") is None
