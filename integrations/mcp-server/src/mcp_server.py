@@ -93,7 +93,7 @@ class CohortService:
             )
             """
         )
-        columns = {row['name'] for row in self._db.execute('PRAGMA table_info(mcp_branches)')} if self.db_path is not None else {row['column_name'] for row in self._db.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'cohort_mcp_branches'")}
+        columns = {row['name'] for row in self._db.execute('PRAGMA table_info(mcp_branches)')} if self.db_path is not None else {row['column_name'] for row in self._db.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'mcp_branches'")}
         if 'fencing_tokens_json' not in columns:
             self._db.execute("ALTER TABLE mcp_branches ADD COLUMN fencing_tokens_json TEXT NOT NULL DEFAULT '{}'")
         self._db.commit()
