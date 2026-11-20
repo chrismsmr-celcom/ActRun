@@ -85,6 +85,15 @@ class LeaseManager:
 
                     if existing.agent_id == agent_id:
                         existing.expires_at = time.time() + duration_seconds
+                        self._events.append(CerbereCohortEvent(
+                            agent_id=agent_id,
+                            action='lease.renew',
+                            payload={
+                                'resource_key': resource_key,
+                                'expires_at': existing.expires_at,
+                                'fencing_token': existing.fencing_token,
+                            },
+                        ))
                         return existing
 
                     if not wait:
