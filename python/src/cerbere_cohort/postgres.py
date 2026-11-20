@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import re
 import threading
+from uuid import UUID
 
 from .events import CerbereCohortEvent
 from .lease import Lease
@@ -39,16 +40,21 @@ class _Connection:
     leave the API returning 500s until restart, so statements issued outside a
     transaction transparently reconnect (once) and retry.
     """
-    def __init__(self, dsn: str):
+    def __init__(self, dsn: str, schema: str = "public"):
         try:
             import psycopg
         except ImportError as exc:
             raise RuntimeError("Install psycopg[binary]>=3.2 for PostgreSQL support") from exc
         self._psycopg = psycopg
+        if not re.fullmatch(r"[a-z][a-z0-9_]{0,62}", schema):
+            raise ValueError("Invalid PostgreSQL schema name")
         self._dsn = dsn
+        self.schema = schema
         self._lock = threading.RLock()
         self._in_txn = False
         self._db = self._connect()
+        if self.schema != "public":
+            self._db.execute(f'CREATE SCHEMA IF NOT EXISTS "{self.schema}"')
 
     def _connect(self):
         # prepare_threshold=None keeps the connection compatible with PgBouncer
@@ -67,7 +73,7 @@ class _Connection:
         self._db = self._connect()
 
     @staticmethod
-    def _translate(sql: str) -> str:
+    def _translate(sql: str, schema: str = "public") -> str:
         statement = sql.strip()
         upper = statement.upper()
         if upper == "BEGIN IMMEDIATE":
@@ -89,27 +95,27 @@ class _Connection:
         # exist in a shared Supabase/Postgres database (notably public.events).
         # Apply this mapping to reads, writes, indexes, and branch storage.
         namespaced = {
-            "objects": "cohort_objects",
-            "events": "public.cohort_events",
-            "leases": "cohort_leases",
-            "metadata": "cohort_metadata",
-            "lease_counters": "cohort_lease_counters",
-            "api_branches": "cohort_api_branches",
-            "idx_events_timestamp": "cohort_idx_events_timestamp",
-            "idx_events_agent": "cohort_idx_events_agent",
-            "idx_events_action": "cohort_idx_events_action",
+            "objects": f'{schema}.cohort_objects',
+            "events": f'{schema}.cohort_events',
+            "leases": f'{schema}.cohort_leases',
+            "metadata": f'{schema}.cohort_metadata',
+            "lease_counters": f'{schema}.cohort_lease_counters',
+            "api_branches": f'{schema}.cohort_api_branches',
+            "idx_events_timestamp": f'cohort_idx_events_timestamp',
+            "idx_events_agent": f'cohort_idx_events_agent',
+            "idx_events_action": f'cohort_idx_events_action',
         }
         for source, target in namespaced.items():
             statement = re.sub(rf"\b{source}\b", target, statement, flags=re.I)
         statement = re.sub(r"ORDER\s+BY\s+rowid", "ORDER BY seq", statement, flags=re.I)
         statement = statement.replace("MAX(fencing_token, excluded.fencing_token)",
-                                      "GREATEST(cohort_lease_counters.fencing_token, EXCLUDED.fencing_token)")
+                                      f"GREATEST({schema}.cohort_lease_counters.fencing_token, EXCLUDED.fencing_token)")
         if ignore_insert and "ON CONFLICT" not in statement.upper():
             statement += " ON CONFLICT DO NOTHING"
         return statement.replace("?", "%s")
 
     def _run(self, sql: str, params):
-        cursor = self._db.execute(self._translate(sql), params)
+        cursor = self._db.execute(self._translate(sql, self.schema), params)
         if sql.strip().upper() == "BEGIN IMMEDIATE":
             self._in_txn = True
             self._db.execute("SELECT pg_advisory_xact_lock(hashtext('cerbere-cohort-runtime'))")
@@ -156,10 +162,14 @@ class PostgresPersistentWorkspace(PersistentWorkspace):
     The advisory transaction lock serializes workspace writes across instances.
     """
     def __init__(self, database_url: str, auto_save: bool = True,
-                 require_leases: bool = False):
+                 require_leases: bool = False, organization_id: str | None = None):
         if not database_url.startswith(("postgres://", "postgresql://")):
             raise ValueError("A PostgreSQL DATABASE_URL is required")
         self.db_path = database_url
+        self.organization_id = str(UUID(organization_id)) if organization_id else None
+        # Each organization gets a dedicated PostgreSQL schema and connection.
+        # The default public schema preserves compatibility for local adapter tests.
+        self.schema = f'cohort_org_{UUID(self.organization_id).hex}' if self.organization_id else 'public'
         self.auto_save = auto_save
         self.require_leases = require_leases
         self._lock = threading.RLock()
@@ -167,7 +177,7 @@ class PostgresPersistentWorkspace(PersistentWorkspace):
         self._workspace = Workspace(require_leases=require_leases)
         self._persisted_ids: set[str] = set()
         self._persisted_hashes: set[str] = set()
-        self._conn = _Connection(database_url)
+        self._conn = _Connection(database_url, schema=self.schema)
         self._init_schema()
         self._load_from_db()
 
