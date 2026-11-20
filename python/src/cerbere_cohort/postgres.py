@@ -194,6 +194,12 @@ class PostgresPersistentWorkspace(PersistentWorkspace):
         with self._lock:
             for statement in schema:
                 self._conn.execute(statement)
+            # Upgrade databases created before fencing tokens were introduced.
+            # IF NOT EXISTS keeps this safe to run on every application startup.
+            self._conn.execute(
+                "ALTER TABLE leases ADD COLUMN IF NOT EXISTS "
+                "fencing_token BIGINT NOT NULL DEFAULT 0"
+            )
             self._conn.commit()
 
 
