@@ -118,3 +118,12 @@ def test_expiry_boundary_is_inclusive():
     from cerbere_cohort.lease import Lease
     lease = Lease("agent-a", "resource", expires_at=time.time(), acquired_at=time.time())
     assert lease.is_expired()
+
+
+def test_same_owner_renews_lease_without_changing_fencing_token():
+    lm = LeaseManager()
+    first = lm.acquire("agent-a", "resource", duration_seconds=1)
+    renewed = lm.acquire("agent-a", "resource", duration_seconds=30)
+    assert renewed.fencing_token == first.fencing_token
+    assert renewed.expires_at > first.expires_at
+    assert lm.get_events()[-1].action == "lease.renew"
