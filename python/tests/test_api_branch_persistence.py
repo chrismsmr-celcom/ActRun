@@ -1,6 +1,8 @@
 import json
 
-from cerbere_cohort import api
+import pytest
+
+from cerbere_cohort import LeaseError, api
 from cerbere_cohort.persistence import PersistentWorkspace
 
 
@@ -37,7 +39,10 @@ def test_api_branch_working_copy_restores_after_registry_reset(tmp_path, monkeyp
     api._branches["branch-1"] = item
     api._save_api_branch("branch-1", item)
 
-    api._branches.clear()
+    store.close()
+    reopened = PersistentWorkspace(tmp_path / "workspace.db", require_leases=True)
+    monkeypatch.setattr(api, "workspace", reopened)
+    monkeypatch.setattr(api, "_branches", {})
     api._restore_api_branches()
 
     restored = api._branches["branch-1"]
@@ -45,9 +50,9 @@ def test_api_branch_working_copy_restores_after_registry_reset(tmp_path, monkeyp
     assert restored["branch"].intents["service.status"] == "persist this change"
     assert restored["branch"].fencing_tokens == {"service.status": 1}
     assert restored["status"] == "open"
-    committed = store.commit("agent-a", restored["branch"])
+    committed = reopened.commit("agent-a", restored["branch"])
     assert committed.data["service.status"] == "ready"
-    store.close()
+    reopened.close()
 
 
 def test_branch_diff_preview_reports_proposed_and_concurrent_values(tmp_path, monkeypatch):
@@ -87,3 +92,99 @@ def test_branch_diff_preview_reports_proposed_and_concurrent_values(tmp_path, mo
     assert role_change["proposed"] == "admin"
     assert role_change["head_changed_since_base"] is False
     store.close()
+
+
+def test_restored_branch_rejects_stale_fencing_token_after_restart(tmp_path, monkeypatch):
+    db_path = tmp_path / "stale-token.db"
+    store = PersistentWorkspace(db_path, require_leases=True)
+    store._conn.execute(
+        """CREATE TABLE api_branches (
+            branch_id TEXT PRIMARY KEY,
+            agent_id TEXT NOT NULL,
+            branch_name TEXT NOT NULL,
+            base_version TEXT NOT NULL,
+            current_data_json TEXT NOT NULL,
+            intents_json TEXT NOT NULL,
+            fencing_tokens_json TEXT NOT NULL DEFAULT '{}',
+            status TEXT NOT NULL,
+            conflicting_keys_json TEXT NOT NULL,
+            created_at TEXT NOT NULL
+        )"""
+    )
+    store._conn.commit()
+    monkeypatch.setattr(api, "workspace", store)
+    monkeypatch.setattr(api, "_branches", {})
+    store.acquire_lease("agent-a", "service.status", duration_seconds=60)
+    branch = store.create_branch("agent-a", "backend")
+    branch.set("service.status", "stale-write")
+    item = {
+        "branch": branch, "agent_id": "agent-a", "status": "open",
+        "conflicting_keys": [], "created_at": "2026-01-01T00:00:00+00:00",
+    }
+    api._branches["branch-stale"] = item
+    api._save_api_branch("branch-stale", item)
+
+    store.release_lease("agent-a", "service.status")
+    replacement = store.acquire_lease("agent-a", "service.status", duration_seconds=60)
+    assert replacement.fencing_token == 2
+    store.close()
+
+    reopened = PersistentWorkspace(db_path, require_leases=True)
+    monkeypatch.setattr(api, "workspace", reopened)
+    monkeypatch.setattr(api, "_branches", {})
+    api._restore_api_branches()
+    restored = api._branches["branch-stale"]["branch"]
+
+    with pytest.raises(LeaseError) as exc:
+        reopened.commit("agent-a", restored)
+    assert exc.value.code == "lease_fenced"
+    reopened.close()
+
+
+def test_legacy_api_branch_schema_upgrade_is_idempotent_and_preserves_rows(tmp_path):
+    from cerbere_cohort.api import _ensure_api_branches_schema
+
+    store = PersistentWorkspace(tmp_path / "legacy-schema.db")
+    store._conn.execute(
+        """CREATE TABLE api_branches (
+            branch_id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, branch_name TEXT NOT NULL,
+            base_version TEXT NOT NULL, current_data_json TEXT NOT NULL, intents_json TEXT NOT NULL,
+            status TEXT NOT NULL, conflicting_keys_json TEXT NOT NULL, created_at TEXT NOT NULL
+        )"""
+    )
+    store._conn.execute(
+        """INSERT INTO api_branches
+           (branch_id, agent_id, branch_name, base_version, current_data_json, intents_json,
+            status, conflicting_keys_json, created_at)
+           VALUES ('legacy-1', 'agent-a', 'backend', 'v1', '{}', '{}', 'open', '[]', 'now')"""
+    )
+    store._conn.commit()
+
+    _ensure_api_branches_schema(store._conn, postgres=False)
+    _ensure_api_branches_schema(store._conn, postgres=False)
+
+    row = store._conn.execute(
+        "SELECT branch_id, fencing_tokens_json FROM api_branches WHERE branch_id = 'legacy-1'"
+    ).fetchone()
+    assert row["branch_id"] == "legacy-1"
+    assert json.loads(row["fencing_tokens_json"]) == {}
+    store.close()
+
+
+def test_postgres_api_branch_schema_upgrade_runs_after_create():
+    class RecordingConnection:
+        def __init__(self):
+            self.statements = []
+        def execute(self, sql):
+            self.statements.append(sql)
+        def commit(self):
+            self.statements.append("COMMIT")
+
+    from cerbere_cohort.api import _ensure_api_branches_schema
+
+    conn = RecordingConnection()
+    _ensure_api_branches_schema(conn, postgres=True)
+    create_index = next(i for i, sql in enumerate(conn.statements) if sql.startswith("CREATE TABLE"))
+    alter_index = next(i for i, sql in enumerate(conn.statements) if sql.startswith("ALTER TABLE"))
+    assert create_index < alter_index
+    assert "ADD COLUMN IF NOT EXISTS fencing_tokens_json" in conn.statements[alter_index]
