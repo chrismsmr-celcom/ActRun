@@ -98,31 +98,43 @@ class _Connection:
         # Keep Cohort's tables isolated from generic tables that may already
         # exist in a shared Supabase/Postgres database (notably public.events).
         # Apply this mapping to reads, writes, indexes, and branch storage.
+        # Preserve the adapter's established public-schema SQL contract.
+        # Tenant schemas are always explicitly qualified to prevent search_path
+        # from ever crossing organization boundaries.
+        public = schema == "public"
         namespaced = {
-            "objects": f'{schema}.cohort_objects',
+            "objects": "cohort_objects" if public else f'{schema}.cohort_objects',
             "events": f'{schema}.cohort_events',
             "leases": f'{schema}.cohort_leases',
             "metadata": f'{schema}.cohort_metadata',
             "lease_counters": f'{schema}.cohort_lease_counters',
-            "api_branches": f'{schema}.cohort_api_branches',
-            "idx_events_timestamp": f'cohort_idx_events_timestamp',
-            "idx_events_agent": f'cohort_idx_events_agent',
-            "idx_events_action": f'cohort_idx_events_action',
+            "api_branches": "cohort_api_branches" if public else f'{schema}.cohort_api_branches',
+            "idx_events_timestamp": 'cohort_idx_events_timestamp',
+            "idx_events_agent": 'cohort_idx_events_agent',
+            "idx_events_action": 'cohort_idx_events_action',
         }
         for source, target in namespaced.items():
             statement = re.sub(rf"\b{source}\b", target, statement, flags=re.I)
         statement = re.sub(r"ORDER\s+BY\s+rowid", "ORDER BY seq", statement, flags=re.I)
-        statement = statement.replace("MAX(fencing_token, excluded.fencing_token)",
-                                      f"GREATEST({schema}.cohort_lease_counters.fencing_token, EXCLUDED.fencing_token)")
+        counter_table = "cohort_lease_counters" if schema == "public" else f"{schema}.cohort_lease_counters"
+        statement = statement.replace(
+            "MAX(fencing_token, excluded.fencing_token)",
+            f"GREATEST({counter_table}.fencing_token, EXCLUDED.fencing_token)",
+        )
         if ignore_insert and "ON CONFLICT" not in statement.upper():
             statement += " ON CONFLICT DO NOTHING"
         return statement.replace("?", "%s")
 
     def _run(self, sql: str, params):
-        cursor = self._db.execute(self._translate(sql, self.schema), params)
+        # Lightweight adapter instances may omit schema; retain public default.
+        schema = getattr(self, "schema", "public")
+        cursor = self._db.execute(self._translate(sql, schema), params)
         if sql.strip().upper() == "BEGIN IMMEDIATE":
             self._in_txn = True
-            self._db.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"cerbere-cohort:{self.schema}",))
+            self._db.execute(
+                "SELECT pg_advisory_xact_lock(hashtext(%s))",
+                (f"cerbere-cohort:{schema}",),
+            )
         return cursor
 
     def execute(self, sql: str, params=()):
