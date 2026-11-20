@@ -76,7 +76,7 @@ def test_bound_mcp_identity_filters_events(tmp_path):
         authenticated_agent_id="agent-a",
     )
     service.create_branch("agent-a", "own")
-    service.create_branch("agent-b", "other")
+    service.workspace.create_branch("agent-b", "other")
     events = service.get_events()
     assert events
     assert {event["agent_id"] for event in events} == {"agent-a"}
