@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="docs/cohort logo.png" alt="Cohort" width="120" />
+<img src="docs/cohort-logo.png" alt="Cohort" width="120" />
 
 # Cohort
 
@@ -9,7 +9,7 @@
 Shared state, clear ownership, and conflict-aware collaboration for multi-agent systems.
 
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Python](https://img.shields.io/badge/python-%3E%3D3.10-3776AB.svg](python/)
+[![Python](https://img.shields.io/badge/python-%3E%3D3.10-3776AB.svg)](python/)
 
 [Quick start](#quick-start) · [Core capabilities](#what-you-can-build-with-cohort) · [MCP integration](#connect-through-mcp) · [Deployment](#deployment)
 
@@ -302,3 +302,5 @@ Contributions and concrete failure reports are welcome. Read [CONTRIBUTING.md](C
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+> ⭐ If Cohort saved you from a silent overwrite, star the repo — it helps us keep building in public.
