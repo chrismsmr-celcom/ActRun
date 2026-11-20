@@ -7,8 +7,11 @@ are implemented, deploy this API as a single instance.
 from __future__ import annotations
 
 import datetime
+import hashlib
 import json
 import os
+import re
+import secrets
 import threading
 import uuid
 from pathlib import Path
@@ -24,6 +27,7 @@ from cerbere_cohort.auth import (
     configure_membership_db,
     require_workspace_member,
     require_workspace_writer,
+    _decode_access_token,
 )
 
 from cerbere_cohort import (
@@ -531,3 +535,140 @@ def main():
         port=int(os.getenv("PORT", os.getenv("COHORT_API_PORT", "8000"))),
         reload=False,
     )
+
+
+class InvitationCreate(BaseModel):
+    email: str = Field(min_length=3, max_length=320)
+    role: Literal["admin", "member", "viewer"] = "member"
+    expires_in_days: int = Field(default=7, ge=1, le=30)
+
+    @field_validator("email")
+    @classmethod
+    def _normalize_email(cls, value: str) -> str:
+        value = value.strip().lower()
+        if not re.fullmatch(r"[^\\s@]+@[^\\s@]+\\.[^\\s@]+", value):
+            raise ValueError("A valid email address is required")
+        return value
+
+
+class InvitationAccept(BaseModel):
+    token: str = Field(min_length=32, max_length=256)
+
+
+def _require_admin(context: dict[str, Any]) -> None:
+    if context.get("role") not in {"owner", "admin"}:
+        raise HTTPException(status_code=403, detail="Organization admin permission required")
+
+
+def _invitation_db():
+    if not DATABASE_URL:
+        raise HTTPException(status_code=503, detail="Organization invitations require PostgreSQL")
+    return workspace._conn
+
+
+@app.post("/api/organizations/invitations", status_code=201)
+def create_organization_invitation(
+    body: InvitationCreate,
+    context: dict[str, Any] = Depends(require_workspace_member),
+):
+    _require_admin(context)
+    token = secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    expires_at = datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=body.expires_in_days)
+    try:
+        row = _invitation_db().execute(
+            """INSERT INTO public.cohort_invitations
+               (organization_id, email, role, token_hash, invited_by, expires_at)
+               VALUES (?, ?, ?, ?, ?, ?)
+               RETURNING id, email, role, expires_at, created_at""",
+            (context["organization_id"], body.email, body.role, token_hash,
+             context["user_id"], expires_at.isoformat()),
+        ).fetchone()
+        workspace._conn.commit()
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Unable to create organization invitation") from exc
+    return {
+        "id": str(row["id"]),
+        "email": row["email"],
+        "role": row["role"],
+        "expires_at": row["expires_at"],
+        "created_at": row["created_at"],
+        "token": token,
+    }
+
+
+@app.get("/api/organizations/invitations")
+def list_organization_invitations(
+    context: dict[str, Any] = Depends(require_workspace_member),
+):
+    _require_admin(context)
+    rows = _invitation_db().execute(
+        """SELECT id, email, role, expires_at, accepted_at, revoked_at, created_at
+           FROM public.cohort_invitations
+           WHERE organization_id = ? ORDER BY created_at DESC LIMIT 200""",
+        (context["organization_id"],),
+    ).fetchall()
+    return {"items": [
+        {
+            "id": str(row["id"]), "email": row["email"], "role": row["role"],
+            "expires_at": row["expires_at"], "accepted_at": row["accepted_at"],
+            "revoked_at": row["revoked_at"], "created_at": row["created_at"],
+        } for row in rows
+    ]}
+
+
+@app.delete("/api/organizations/invitations/{invitation_id}")
+def revoke_organization_invitation(
+    invitation_id: UUID,
+    context: dict[str, Any] = Depends(require_workspace_member),
+):
+    _require_admin(context)
+    row = _invitation_db().execute(
+        """UPDATE public.cohort_invitations SET revoked_at = now()
+           WHERE id = ? AND organization_id = ? AND accepted_at IS NULL
+             AND revoked_at IS NULL AND expires_at > now()
+           RETURNING id""",
+        (str(invitation_id), context["organization_id"]),
+    ).fetchone()
+    workspace._conn.commit()
+    if not row:
+        raise HTTPException(status_code=404, detail="Active invitation not found")
+    return {"revoked": True, "id": str(invitation_id)}
+
+
+@app.post("/api/organizations/invitations/accept")
+def accept_organization_invitation(
+    body: InvitationAccept,
+    authorization: str | None = Header(default=None),
+):
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Bearer access token required")
+    claims = _decode_access_token(authorization[7:].strip())
+    user_id = str(UUID(str(claims["sub"])))
+    email = str(claims.get("email", "")).strip().lower()
+    if not email:
+        raise HTTPException(status_code=403, detail="A verified account email is required")
+    token_hash = hashlib.sha256(body.token.encode("utf-8")).hexdigest()
+    try:
+        row = _invitation_db().execute(
+            """WITH accepted AS (
+                 UPDATE public.cohort_invitations
+                 SET accepted_at = now(), accepted_by = ?
+                 WHERE token_hash = ? AND lower(email) = ? AND accepted_at IS NULL
+                   AND revoked_at IS NULL AND expires_at > now()
+                 RETURNING organization_id, role
+               )
+               INSERT INTO public.cohort_memberships
+                 (organization_id, user_id, role, status)
+               SELECT organization_id, ?, role, 'active' FROM accepted
+               ON CONFLICT (organization_id, user_id)
+               DO UPDATE SET role = EXCLUDED.role, status = 'active'
+               RETURNING organization_id, role""",
+            (user_id, token_hash, email, user_id),
+        ).fetchone()
+        workspace._conn.commit()
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Unable to accept organization invitation") from exc
+    if not row:
+        raise HTTPException(status_code=404, detail="Invitation is invalid, expired, revoked, or for another email")
+    return {"accepted": True, "organization_id": str(row["organization_id"]), "role": row["role"]}
