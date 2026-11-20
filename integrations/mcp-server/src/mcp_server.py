@@ -383,7 +383,15 @@ def main() -> None:
     authenticated_agent_id = os.getenv('COHORT_MCP_AGENT_ID', '').strip() or None
     if database_url and not authenticated_agent_id:
         raise RuntimeError('COHORT_MCP_AGENT_ID is required for production MCP stdio identity binding')
-    service = CohortService(args.db, authenticated_agent_id=authenticated_agent_id)
+    organization_id = os.getenv('COHORT_ORGANIZATION_ID', '').strip() or None
+    if database_url and not organization_id:
+        raise RuntimeError('COHORT_ORGANIZATION_ID is required for production MCP schema isolation')
+    service = CohortService(
+        args.db,
+        authenticated_agent_id=authenticated_agent_id,
+        organization_id=organization_id,
+        require_leases=True if database_url else None,
+    )
     mcp = create_server(service, host=args.host, port=args.port)
     if args.transport == "stdio":
         mcp.run(transport="stdio")
