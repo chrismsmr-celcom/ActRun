@@ -109,6 +109,7 @@ class _Connection:
             "metadata": f'{schema}.cohort_metadata',
             "lease_counters": f'{schema}.cohort_lease_counters',
             "api_branches": "cohort_api_branches" if public else f'{schema}.cohort_api_branches',
+            "mcp_branches": "cohort_mcp_branches" if public else f'{schema}.cohort_mcp_branches',
             "idx_events_timestamp": 'cohort_idx_events_timestamp',
             "idx_events_agent": 'cohort_idx_events_agent',
             "idx_events_action": 'cohort_idx_events_action',
