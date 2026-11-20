@@ -193,6 +193,7 @@ def test_agent_scope_dependency_accepts_only_requested_scope(monkeypatch):
     import cerbere_cohort.auth as auth
 
     monkeypatch.setenv("DATABASE_URL", "postgresql://example")
+    monkeypatch.setenv("COHORT_ORGANIZATION_ID", "11111111-1111-4111-8111-111111111111")
     monkeypatch.setattr(auth, "authenticate_agent_token", lambda token, org: {
         "principal_type": "agent",
         "agent_id": "worker-a",
