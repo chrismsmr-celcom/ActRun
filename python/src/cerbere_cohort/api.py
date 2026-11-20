@@ -647,15 +647,19 @@ def accept_organization_invitation(
     user_id = str(UUID(str(claims["sub"])))
     email = str(claims.get("email", "")).strip().lower()
     if not email:
-        raise HTTPException(status_code=403, detail="A verified account email is required")
+        raise HTTPException(status_code=403, detail="An account email is required")
     token_hash = hashlib.sha256(body.token.encode("utf-8")).hexdigest()
     try:
         row = _invitation_db().execute(
-            """WITH accepted AS (
+            """WITH eligible_user AS (
+                 SELECT id FROM auth.users
+                 WHERE id = ? AND lower(email) = ? AND email_confirmed_at IS NOT NULL
+               ), accepted AS (
                  UPDATE public.cohort_invitations
                  SET accepted_at = now(), accepted_by = ?
                  WHERE token_hash = ? AND lower(email) = ? AND accepted_at IS NULL
                    AND revoked_at IS NULL AND expires_at > now()
+                   AND EXISTS (SELECT 1 FROM eligible_user)
                  RETURNING organization_id, role
                )
                INSERT INTO public.cohort_memberships
@@ -664,11 +668,11 @@ def accept_organization_invitation(
                ON CONFLICT (organization_id, user_id)
                DO UPDATE SET role = EXCLUDED.role, status = 'active'
                RETURNING organization_id, role""",
-            (user_id, token_hash, email, user_id),
+            (user_id, email, user_id, token_hash, email, user_id),
         ).fetchone()
         workspace._conn.commit()
     except Exception as exc:
         raise HTTPException(status_code=503, detail="Unable to accept organization invitation") from exc
     if not row:
-        raise HTTPException(status_code=404, detail="Invitation is invalid, expired, revoked, or for another email")
+        raise HTTPException(status_code=404, detail="Invitation is invalid, expired, revoked, or the account email is not confirmed")
     return {"accepted": True, "organization_id": str(row["organization_id"]), "role": row["role"]}
