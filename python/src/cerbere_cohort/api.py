@@ -28,7 +28,10 @@ from cerbere_cohort.auth import (
     require_workspace_member,
     require_workspace_writer,
     _decode_access_token,
-    require_workspace_read_access,\n    require_workspace_write_access,\n    require_lease_read_access,\n    require_lease_write_access,
+    require_workspace_read_access,
+    require_workspace_write_access,
+    require_lease_read_access,
+    require_lease_write_access,
 )
 
 from cerbere_cohort import (
