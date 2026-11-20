@@ -118,3 +118,16 @@ def test_mcp_rejects_invalid_lease_duration(tmp_path):
     with pytest.raises(ValueError, match="duration_seconds"):
         service.acquire_lease("agent-a", "record/1", 0)
     service.close()
+
+
+def test_mcp_agent_scopes_separate_workspace_and_lease_permissions(tmp_path):
+    service = CohortService(
+        tmp_path / "scopes.db",
+        authenticated_agent_id="agent-a",
+        agent_scopes=["workspace:read"],
+    )
+    assert service.get_state()["state"] == {}
+    with pytest.raises(Exception) as exc:
+        service.create_branch("agent-a", "forbidden")
+    assert getattr(exc.value, "code", None) == "insufficient_scope"
+    service.close()
