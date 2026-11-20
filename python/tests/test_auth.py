@@ -118,3 +118,72 @@ def test_production_membership_db_failure_is_fail_closed(monkeypatch):
         assert exc.detail == "Unable to verify organization membership"
     else:
         raise AssertionError("Database failures must fail closed")
+
+
+def test_agent_credential_authentication_is_org_scoped_and_updates_last_used(monkeypatch):
+    import cerbere_cohort.auth as auth
+
+    class CredentialDB:
+        def __init__(self):
+            self.calls = []
+            self.committed = False
+
+        def execute(self, sql, params):
+            self.calls.append((sql, params))
+            return _FakeCursor({
+                "id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+                "organization_id": "11111111-1111-4111-8111-111111111111",
+                "agent_id": "worker-1",
+                "scopes": ["workspace:read", "leases:read"],
+            })
+
+        def commit(self):
+            self.committed = True
+
+    db = CredentialDB()
+    monkeypatch.setattr(auth, "_membership_db", db)
+    result = auth.authenticate_agent_token(
+        "coh_test-secret",
+        "11111111-1111-4111-8111-111111111111",
+    )
+
+    assert result["principal_type"] == "agent"
+    assert result["agent_id"] == "worker-1"
+    assert result["scopes"] == ["workspace:read", "leases:read"]
+    assert db.calls[0][1][1] == "11111111-1111-4111-8111-111111111111"
+    assert "revoked_at IS NULL" in db.calls[0][0]
+    assert "expires_at > now()" in db.calls[0][0]
+    assert db.committed is True
+
+
+def test_agent_credential_authentication_rejects_bad_prefix_before_database(monkeypatch):
+    import cerbere_cohort.auth as auth
+
+    db = _FakeMembershipDB()
+    monkeypatch.setattr(auth, "_membership_db", db)
+    try:
+        auth.authenticate_agent_token("not-an-agent-token", "11111111-1111-4111-8111-111111111111")
+    except HTTPException as exc:
+        assert exc.status_code == 401
+    else:
+        raise AssertionError("Invalid agent token prefix must be rejected")
+    assert db.calls == []
+
+
+def test_agent_credential_authentication_rejects_unknown_or_revoked_token(monkeypatch):
+    import cerbere_cohort.auth as auth
+
+    class EmptyDB:
+        def execute(self, sql, params):
+            return _FakeCursor(None)
+
+        def commit(self):
+            pass
+
+    monkeypatch.setattr(auth, "_membership_db", EmptyDB())
+    try:
+        auth.authenticate_agent_token("coh_unknown-secret", "11111111-1111-4111-8111-111111111111")
+    except HTTPException as exc:
+        assert exc.status_code == 401
+    else:
+        raise AssertionError("Unknown credentials must be rejected")
