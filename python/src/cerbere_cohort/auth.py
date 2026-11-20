@@ -158,3 +158,49 @@ def require_workspace_writer(context: dict[str, Any] = Depends(require_workspace
     if context.get("role") not in {"owner", "admin", "member"} and context.get("user_id") != "local":
         raise HTTPException(status_code=403, detail="Workspace write permission required")
     return context
+
+
+AGENT_SCOPES = frozenset({
+    "workspace:read",
+    "workspace:write",
+    "leases:read",
+    "leases:write",
+})
+
+
+def authenticate_agent_token(token: str, organization_id: str) -> dict[str, Any]:
+    """Resolve an agent credential, enforcing organization, expiry and revocation."""
+    import hashlib
+
+    if not token or len(token) > 256 or not token.startswith("coh_"):
+        raise HTTPException(status_code=401, detail="Invalid agent credential")
+    try:
+        org_id = str(UUID(organization_id))
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid organization ID") from exc
+    if _membership_db is None:
+        raise HTTPException(status_code=503, detail="Credential database is unavailable")
+    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    try:
+        row = _membership_db.execute(
+            """UPDATE public.cohort_agent_credentials
+               SET last_used_at = now()
+               WHERE token_hash = ? AND organization_id = ?
+                 AND revoked_at IS NULL
+                 AND (expires_at IS NULL OR expires_at > now())
+               RETURNING id, organization_id, agent_id, scopes""",
+            (token_hash, org_id),
+        ).fetchone()
+        _membership_db.commit()
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Unable to verify agent credential") from exc
+    if not row:
+        raise HTTPException(status_code=401, detail="Invalid, expired, or revoked agent credential")
+    scopes = list(row["scopes"] if isinstance(row, dict) else row[3])
+    return {
+        "principal_type": "agent",
+        "credential_id": str(row["id"] if isinstance(row, dict) else row[0]),
+        "organization_id": str(row["organization_id"] if isinstance(row, dict) else row[1]),
+        "agent_id": row["agent_id"] if isinstance(row, dict) else row[2],
+        "scopes": scopes,
+    }
