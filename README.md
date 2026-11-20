@@ -44,7 +44,9 @@ Use Cohort alongside the agent framework and tools you already work with.
 | **Event history and replay** | Inspect coordination events and reconstruct workspace state from stored history. |
 | **Content-addressed snapshots** | Hash canonicalized values and verify reconstructed snapshot identities. |
 | **REST API** | Connect applications to workspace state, branches, commits, leases, and events. |
-| **MCP tools** | Experiment with workspace coordination through an MCP server and compatible local clients. |
+| **MCP tools** | Connect local clients or authenticated production agent processes to workspace coordination. |
+| **Agent credentials and scopes** | Bind a production MCP process to a registered agent identity and enforce workspace/lease permissions. |
+| **Lease fencing** | Reject branch commits made with expired or superseded lease tokens. |
 
 Cohort focuses on coordination: shared state, concurrent changes, ownership, and traceable decisions. Your agents and framework remain responsible for planning tasks, calling models, and executing external tools.
 
@@ -205,7 +207,7 @@ For local development, the server also supports Streamable HTTP on `127.0.0.1:87
 cerbere-cohort-mcp
 ```
 
-The MCP integration is an early implementation. Its branch registry is currently separate from the REST API branch registry. When `DATABASE_URL` is configured, the server requires stdio; authenticated remote MCP transport is not yet available. Do not expose the local HTTP transport publicly.
+The MCP integration keeps a branch registry separate from the REST API branch registry. Local SQLite mode supports an unauthenticated Streamable HTTP endpoint on loopback for development only. For production PostgreSQL mode, run one stdio process per agent with `DATABASE_URL`, `COHORT_ORGANIZATION_ID`, and `COHORT_MCP_AGENT_TOKEN`. The token resolves the registered agent identity and scopes; callers cannot impersonate another agent. Production MCP enforces `workspace:read`, `workspace:write`, and `leases:write`, and requires leases for branch writes. Authenticated remote MCP HTTP is not available.
 
 ## Use the interface that fits your setup
 
@@ -268,10 +270,12 @@ A few implementation details matter when evaluating the current release:
 
 - The hosted API is configured for one organization per deployment and one API instance. It is not yet a general multi-tenant or horizontally scalable coordination service.
 - The MCP server uses a separate branch registry from the REST API.
-- The MCP server requires stdio when `DATABASE_URL` is configured; authenticated remote MCP transport is not implemented.
+- Production MCP uses one authenticated stdio process per agent against the configured PostgreSQL organization schema. Authenticated remote MCP HTTP is not implemented.
+- MCP agents with `workspace:read` can read the shared committed state; event details are filtered to the authenticated agent.
+- Production MCP branch writes require a valid resource lease. Fencing tokens prevent commits from expired or superseded lease holders.
 - The workspace is key-value based. Conflict detection operates at key granularity.
 - The Rust trace analyzer is an early tool for basic JSONL analysis.
-- Cohort coordinates shared state; it does not provide agent identity, external tool authorization, or code sandboxing.
+- Production MCP provides process-bound agent identity and workspace/lease scope checks. This does not provide authorization for external tools or code sandboxing.
 - Conflict resolution policies do not guarantee semantic correctness of application data.
 
 The hosted API's route definitions and request/response models in the source code are the reference for exact API behavior. Run the service to access FastAPI's interactive documentation at `/docs`.
@@ -280,9 +284,9 @@ The hosted API's route definitions and request/response models in the source cod
 
 We are working toward stronger coordination across agent runtimes and deployment environments, including:
 
-- Fencing-token enforcement at the storage boundary to reject writes from stale lease holders.
 - A unified branch and coordination model across REST and MCP.
-- Agent identity and permission controls.
+- More granular state visibility and resource-level permissions.
+- Authenticated remote MCP transport.
 - Document-oriented workspaces and richer shared resources.
 - Multi-organization deployments and multi-instance coordination.
 - Broader framework integrations and more useful trace analytics.
@@ -291,7 +295,7 @@ These are development directions, not claims about features already shipped. See
 
 ## Security and data handling
 
-The hosted REST API authenticates human users with Supabase JWTs and checks active membership in its configured organization. This does not provide agent-level identity, general multi-tenant isolation, external tool authorization, or code sandboxing.
+The hosted REST API authenticates human users with Supabase JWTs and checks active membership in its configured organization. Production MCP authenticates agent processes with registered agent credentials and enforces workspace and lease scopes. These controls do not provide external tool authorization or code sandboxing. The hosted API remains configured for one organization per deployment.
 
 Local library and SQLite development usage do not provide an authenticated public API. Do not expose them directly to the internet. Workspace values and event payloads may contain application data; apply appropriate redaction, access controls, and retention policies before storing sensitive information.
 
