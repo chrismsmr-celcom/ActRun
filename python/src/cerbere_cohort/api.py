@@ -75,18 +75,30 @@ if DATABASE_URL:
 _lock = threading.RLock()
 _branches: dict[str, dict[str, Any]] = {}
 
-workspace._conn.execute("CREATE TABLE IF NOT EXISTS api_branches (branch_id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, branch_name TEXT NOT NULL, base_version TEXT NOT NULL, current_data_json TEXT NOT NULL, intents_json TEXT NOT NULL, fencing_tokens_json TEXT NOT NULL DEFAULT '{}', status TEXT NOT NULL, conflicting_keys_json TEXT NOT NULL, created_at TEXT NOT NULL)")
-if DATABASE_URL:
-    workspace._conn.execute(
-        "ALTER TABLE api_branches ADD COLUMN IF NOT EXISTS fencing_tokens_json TEXT NOT NULL DEFAULT '{}'"
+def _ensure_api_branches_schema(conn, *, postgres: bool) -> None:
+    """Create the API branch registry and safely upgrade pre-fencing schemas."""
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS api_branches ("
+        "branch_id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, branch_name TEXT NOT NULL, "
+        "base_version TEXT NOT NULL, current_data_json TEXT NOT NULL, intents_json TEXT NOT NULL, "
+        "fencing_tokens_json TEXT NOT NULL DEFAULT '{}', status TEXT NOT NULL, "
+        "conflicting_keys_json TEXT NOT NULL, created_at TEXT NOT NULL)"
     )
-else:
-    branch_columns = {row["name"] for row in workspace._conn.execute("PRAGMA table_info(api_branches)")}
-    if "fencing_tokens_json" not in branch_columns:
-        workspace._conn.execute(
-            "ALTER TABLE api_branches ADD COLUMN fencing_tokens_json TEXT NOT NULL DEFAULT '{}'"
+    if postgres:
+        conn.execute(
+            "ALTER TABLE api_branches ADD COLUMN IF NOT EXISTS "
+            "fencing_tokens_json TEXT NOT NULL DEFAULT '{}'"
         )
-workspace._conn.commit()
+    else:
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(api_branches)")}
+        if "fencing_tokens_json" not in columns:
+            conn.execute(
+                "ALTER TABLE api_branches ADD COLUMN fencing_tokens_json TEXT NOT NULL DEFAULT '{}'"
+            )
+    conn.commit()
+
+
+_ensure_api_branches_schema(workspace._conn, postgres=bool(DATABASE_URL))
 
 def _save_api_branch(branch_id: str, item: dict[str, Any]) -> None:
     b = item['branch']
