@@ -67,7 +67,7 @@ def test_branch_diff_preview_reports_proposed_and_concurrent_values(tmp_path, mo
         }
     })
 
-    result = api.get_branch_diff("target-branch")
+    result = api.get_branch_diff("target-branch", context={"principal_type": "user"})
 
     assert result["change_count"] == 2
     name_change = next(change for change in result["changes"] if change["key"] == "profile/name")
