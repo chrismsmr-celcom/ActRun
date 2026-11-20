@@ -5,7 +5,7 @@ from cerbere_cohort.persistence import PersistentWorkspace
 
 
 def test_api_branch_working_copy_restores_after_registry_reset(tmp_path, monkeypatch):
-    store = PersistentWorkspace(tmp_path / "workspace.db")
+    store = PersistentWorkspace(tmp_path / "workspace.db", require_leases=True)
     store._conn.execute(
         """CREATE TABLE api_branches (
             branch_id TEXT PRIMARY KEY,
@@ -14,6 +14,7 @@ def test_api_branch_working_copy_restores_after_registry_reset(tmp_path, monkeyp
             base_version TEXT NOT NULL,
             current_data_json TEXT NOT NULL,
             intents_json TEXT NOT NULL,
+            fencing_tokens_json TEXT NOT NULL DEFAULT '{}',
             status TEXT NOT NULL,
             conflicting_keys_json TEXT NOT NULL,
             created_at TEXT NOT NULL
@@ -23,6 +24,7 @@ def test_api_branch_working_copy_restores_after_registry_reset(tmp_path, monkeyp
     monkeypatch.setattr(api, "workspace", store)
     monkeypatch.setattr(api, "_branches", {})
 
+    store.acquire_lease("agent-a", "service.status", duration_seconds=60)
     branch = store.create_branch("agent-a", "backend")
     item = {
         "branch": branch,
@@ -41,7 +43,10 @@ def test_api_branch_working_copy_restores_after_registry_reset(tmp_path, monkeyp
     restored = api._branches["branch-1"]
     assert restored["branch"].get("service.status") == "ready"
     assert restored["branch"].intents["service.status"] == "persist this change"
+    assert restored["branch"].fencing_tokens == {"service.status": 1}
     assert restored["status"] == "open"
+    committed = store.commit("agent-a", restored["branch"])
+    assert committed.data["service.status"] == "ready"
     store.close()
 
 

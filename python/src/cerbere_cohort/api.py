@@ -75,12 +75,22 @@ if DATABASE_URL:
 _lock = threading.RLock()
 _branches: dict[str, dict[str, Any]] = {}
 
-workspace._conn.execute("CREATE TABLE IF NOT EXISTS api_branches (branch_id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, branch_name TEXT NOT NULL, base_version TEXT NOT NULL, current_data_json TEXT NOT NULL, intents_json TEXT NOT NULL, status TEXT NOT NULL, conflicting_keys_json TEXT NOT NULL, created_at TEXT NOT NULL)")
+workspace._conn.execute("CREATE TABLE IF NOT EXISTS api_branches (branch_id TEXT PRIMARY KEY, agent_id TEXT NOT NULL, branch_name TEXT NOT NULL, base_version TEXT NOT NULL, current_data_json TEXT NOT NULL, intents_json TEXT NOT NULL, fencing_tokens_json TEXT NOT NULL DEFAULT '{}', status TEXT NOT NULL, conflicting_keys_json TEXT NOT NULL, created_at TEXT NOT NULL)")
+if DATABASE_URL:
+    workspace._conn.execute(
+        "ALTER TABLE api_branches ADD COLUMN IF NOT EXISTS fencing_tokens_json TEXT NOT NULL DEFAULT '{}'"
+    )
+else:
+    branch_columns = {row["name"] for row in workspace._conn.execute("PRAGMA table_info(api_branches)")}
+    if "fencing_tokens_json" not in branch_columns:
+        workspace._conn.execute(
+            "ALTER TABLE api_branches ADD COLUMN fencing_tokens_json TEXT NOT NULL DEFAULT '{}'"
+        )
 workspace._conn.commit()
 
 def _save_api_branch(branch_id: str, item: dict[str, Any]) -> None:
     b = item['branch']
-    workspace._conn.execute("INSERT INTO api_branches (branch_id, agent_id, branch_name, base_version, current_data_json, intents_json, status, conflicting_keys_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(branch_id) DO UPDATE SET current_data_json=excluded.current_data_json, intents_json=excluded.intents_json, status=excluded.status, conflicting_keys_json=excluded.conflicting_keys_json", (branch_id, item['agent_id'], b.name, b.base_version, json.dumps(b.current_data, ensure_ascii=False), json.dumps(b.intents, ensure_ascii=False), item['status'], json.dumps(item.get('conflicting_keys', [])), item['created_at']))
+    workspace._conn.execute("INSERT INTO api_branches (branch_id, agent_id, branch_name, base_version, current_data_json, intents_json, fencing_tokens_json, status, conflicting_keys_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(branch_id) DO UPDATE SET current_data_json=excluded.current_data_json, intents_json=excluded.intents_json, fencing_tokens_json=excluded.fencing_tokens_json, status=excluded.status, conflicting_keys_json=excluded.conflicting_keys_json", (branch_id, item['agent_id'], b.name, b.base_version, json.dumps(b.current_data, ensure_ascii=False), json.dumps(b.intents, ensure_ascii=False), json.dumps(b.fencing_tokens, ensure_ascii=False), item['status'], json.dumps(item.get('conflicting_keys', [])), item['created_at']))
     workspace._conn.commit()
 
 def _restore_api_branches() -> None:
@@ -99,6 +109,7 @@ def _restore_api_branches() -> None:
         b = Branch(row['branch_name'], base, workspace._workspace._lease_manager, row['agent_id'], workspace._workspace._require_leases)
         b.current_data = json.loads(row['current_data_json'])
         b.intents = json.loads(row['intents_json'])
+        b.fencing_tokens = json.loads(row['fencing_tokens_json'] or "{}")
         _branches[row['branch_id']] = {'branch': b, 'agent_id': row['agent_id'], 'status': row['status'], 'conflicting_keys': json.loads(row['conflicting_keys_json']), 'created_at': row['created_at']}
     workspace._conn.commit()
 
