@@ -113,10 +113,7 @@ For coordination between multiple agents, use one shared Streamable HTTP server.
 
 ## Current scope and limitations
 
-- This release coordinates clients sharing one server process and one local
-  SQLite database on a single machine.
-- It is not a distributed multi-host coordination service.
-- The server serializes its own tool operations. Do not open the same database
-  from multiple independent server processes.
+- Local SQLite mode is intended for one server process on one machine.
+- Production PostgreSQL mode supports separate stdio server processes per agent, sharing the same organization schema; database transactions and fencing tokens coordinate their writes.
+- It is not a multi-region coordination service.
 - Local unauthenticated HTTP is for loopback development only. Production MCP identity is process-bound; remote authenticated HTTP transport is not enabled yet.
-- The MCP endpoint is unauthenticated; keep it on loopback.
