@@ -52,7 +52,11 @@ if not DATABASE_URL:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 REQUIRE_LEASES = os.getenv("COHORT_REQUIRE_LEASES", "false").lower() in {"1", "true", "yes", "on"}
 workspace = (
-    PostgresPersistentWorkspace(DATABASE_URL, require_leases=REQUIRE_LEASES)
+    PostgresPersistentWorkspace(
+        DATABASE_URL,
+        require_leases=REQUIRE_LEASES,
+        organization_id=os.getenv("COHORT_ORGANIZATION_ID"),
+    )
     if DATABASE_URL.startswith(("postgres://", "postgresql://"))
     else PersistentWorkspace(DB_PATH, require_leases=REQUIRE_LEASES)
 )
