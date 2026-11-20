@@ -57,3 +57,62 @@ def test_event_limit_is_validated(tmp_path):
     with pytest.raises(ValueError):
         service.get_events(0)
     service.close()
+
+
+def test_bound_mcp_identity_rejects_agent_spoofing(tmp_path):
+    service = CohortService(
+        tmp_path / "bound.db",
+        authenticated_agent_id="agent-a",
+    )
+    with pytest.raises(ValueError, match="identity bound"):
+        service.create_branch("agent-b", "forbidden")
+    service.create_branch("agent-a", "allowed")
+    service.close()
+
+
+def test_bound_mcp_identity_filters_events(tmp_path):
+    service = CohortService(
+        tmp_path / "events.db",
+        authenticated_agent_id="agent-a",
+    )
+    service.create_branch("agent-a", "own")
+    service.create_branch("agent-b", "other")
+    events = service.get_events()
+    assert events
+    assert {event["agent_id"] for event in events} == {"agent-a"}
+    service.close()
+
+
+def test_mcp_branch_fencing_token_survives_restart(tmp_path):
+    db = tmp_path / "fencing.db"
+    service = CohortService(db, require_leases=True)
+    service.create_branch("agent-a", "work")
+    lease = service.acquire_lease("agent-a", "record/1", 30)
+    assert lease["fencing_token"] >= 1
+    service.write_branch("agent-a", "work", "record/1", {"value": 1})
+    service.close()
+
+    restarted = CohortService(db, require_leases=True)
+    result = restarted.commit_branch("agent-a", "work")
+    assert result["committed"] is True
+    assert result["state"]["record/1"] == {"value": 1}
+    restarted.close()
+
+
+def test_mcp_rejects_commit_after_lease_takeover(tmp_path):
+    service = CohortService(tmp_path / "stale.db", require_leases=True)
+    service.create_branch("agent-a", "work")
+    service.acquire_lease("agent-a", "record/1", 30)
+    service.write_branch("agent-a", "work", "record/1", {"value": "stale"})
+    service.workspace.acquire_lease("agent-b", "record/1", 30)
+    with pytest.raises(Exception) as exc:
+        service.commit_branch("agent-a", "work")
+    assert getattr(exc.value, "code", None) == "lease_fenced"
+    service.close()
+
+
+def test_mcp_rejects_invalid_lease_duration(tmp_path):
+    service = CohortService(tmp_path / "duration.db")
+    with pytest.raises(ValueError, match="duration_seconds"):
+        service.acquire_lease("agent-a", "record/1", 0)
+    service.close()
