@@ -179,7 +179,7 @@ class Workspace:
         pendant ce temps, la fusion est refaite contre le nouveau HEAD (CONCEPTS §4).
         """
         for _ in range(max_retries + 1):
-            with self._lock:
+            with self._lock, self._lease_manager.fencing_guard():
                 head = self.head
                 base = self._snapshots[branch.base_version]
                 self._validate_branch_leases(agent_id, branch, base)
@@ -210,7 +210,7 @@ class Workspace:
 
             decisions = self._decide(agent_id, branch, head, resolver, conflicts)  # hors verrou
 
-            with self._lock:
+            with self._lock, self._lease_manager.fencing_guard():
                 if self._head_version != head.version_id:
                     continue  # HEAD a bougé pendant la décision : on refait la fusion
                 # Le résolveur s'exécute hors verrou : le lease peut avoir expiré
