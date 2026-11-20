@@ -63,9 +63,10 @@ For production PostgreSQL deployments, run one stdio server process per agent an
 
 - `DATABASE_URL`: PostgreSQL connection string.
 - `COHORT_ORGANIZATION_ID`: organization UUID; the MCP branch registry is stored in that organization's schema.
-- `COHORT_MCP_AGENT_ID`: immutable agent identity bound to that process. Calls that claim another `agent_id` are rejected.
+- `COHORT_MCP_AGENT_TOKEN`: agent credential created by the Cohort organization; its registered `agent_id` and scopes are loaded from PostgreSQL.
+- `COHORT_MCP_AGENT_ID` (optional): expected identity assertion; startup fails if it differs from the credential's registered agent.
 
-Production MCP mode requires a bound agent identity and enables lease enforcement. Each branch write must hold a lease for the key being changed. `lease_acquire` returns a monotonically increasing `fencing_token`; same-owner renewal extends expiry without changing the token, while takeover after expiry receives a higher token. Commits reject expired or superseded tokens. Event reads are filtered to the bound agent. `workspace_get_state` intentionally exposes the shared committed state to the connected agent because that is Cohort's coordination model.
+Production MCP mode authenticates the agent token, enforces its `workspace:read`, `workspace:write`, and `leases:write` scopes per tool, binds the process to the credential's registered agent identity, and enables lease enforcement. Each branch write must hold a lease for the key being changed. `lease_acquire` returns a monotonically increasing `fencing_token`; same-owner renewal extends expiry without changing the token, while takeover after expiry receives a higher token. Commits reject expired or superseded tokens. Event reads are filtered to the bound agent. `workspace_get_state` intentionally exposes the shared committed state to the connected agent because that is Cohort's coordination model.
 
 ## MCP tools
 
