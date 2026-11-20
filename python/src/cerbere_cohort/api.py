@@ -28,6 +28,10 @@ from cerbere_cohort.auth import (
     require_workspace_member,
     require_workspace_writer,
     _decode_access_token,
+    require_workspace_read_access,
+    require_workspace_write_access,
+    require_lease_read_access,
+    require_lease_write_access,
 )
 
 from cerbere_cohort import (
@@ -224,7 +228,7 @@ def register_telemetry_installation(body: TelemetryInstall):
     return {"accepted": True}
 
 
-@app.get("/api/traction", dependencies=[Depends(require_workspace_member)])
+@app.get("/api/traction", dependencies=[Depends(require_workspace_read_access)])
 def get_traction_metrics():
     """Return aggregate opt-in installation counts to authenticated workspace members."""
     if not _telemetry_collector_enabled() or not DATABASE_URL:
@@ -321,7 +325,7 @@ def get_branch_diff(branch_id: str):
         }
 
 
-@app.post("/api/branches", status_code=201, dependencies=[Depends(require_workspace_writer)])
+@app.post("/api/branches", status_code=201, dependencies=[Depends(require_workspace_write_access)])
 def create_branch(body: BranchCreate):
     branch_id = str(uuid.uuid4())
     try:

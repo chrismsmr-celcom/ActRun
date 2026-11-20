@@ -187,3 +187,47 @@ def test_agent_credential_authentication_rejects_unknown_or_revoked_token(monkey
         assert exc.status_code == 401
     else:
         raise AssertionError("Unknown credentials must be rejected")
+
+
+def test_agent_scope_dependency_accepts_only_requested_scope(monkeypatch):
+    import cerbere_cohort.auth as auth
+
+    monkeypatch.setenv("DATABASE_URL", "postgresql://example")
+    monkeypatch.setenv("COHORT_ORGANIZATION_ID", "11111111-1111-4111-8111-111111111111")
+    monkeypatch.setattr(auth, "authenticate_agent_token", lambda token, org: {
+        "principal_type": "agent",
+        "agent_id": "worker-a",
+        "organization_id": org,
+        "scopes": ["workspace:read"],
+    })
+    reader = auth.require_workspace_scope("workspace:read")
+    context = reader(
+        authorization="Bearer coh_valid",
+        x_organization_id="11111111-1111-4111-8111-111111111111",
+    )
+    assert context["agent_id"] == "worker-a"
+
+    writer = auth.require_workspace_scope("workspace:write")
+    try:
+        writer(
+            authorization="Bearer coh_valid",
+            x_organization_id="11111111-1111-4111-8111-111111111111",
+        )
+    except HTTPException as exc:
+        assert exc.status_code == 403
+    else:
+        raise AssertionError("An agent without workspace:write must be rejected")
+
+
+def test_scope_dependency_keeps_supabase_member_auth(monkeypatch):
+    import cerbere_cohort.auth as auth
+
+    monkeypatch.setenv("DATABASE_URL", "postgresql://example")
+    expected = {"user_id": "user-1", "organization_id": "org-1", "role": "member"}
+    monkeypatch.setattr(auth, "require_workspace_member", lambda authorization, org: expected)
+    dependency = auth.require_workspace_scope("workspace:write")
+    result = dependency(
+        authorization="Bearer supabase-jwt",
+        x_organization_id="11111111-1111-4111-8111-111111111111",
+    )
+    assert result is expected
