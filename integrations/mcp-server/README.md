@@ -13,7 +13,7 @@ committed state, leases, events, and open branches in SQLite.
 - Conflict-aware commits: overlapping edits are rejected rather than silently
   overwriting another agent's changes; disjoint edits can merge.
 - SQLite persistence, including unfinished branch state across server restarts.
-- Resource leases and an append-only event log.
+- Resource leases with renewal, fencing tokens, and an append-only event log.
 - Streamable HTTP for multiple clients, plus stdio for single-client setups.
 
 ## Requirements
@@ -31,7 +31,7 @@ python -m pip install -e ./python
 python -m pip install -e ./integrations/mcp-server
 ```
 
-## Start the shared server
+## Start the local development server
 
 ```bash
 cerbere-cohort-mcp --transport streamable-http
@@ -57,10 +57,16 @@ Keep the server running while clients are connected. Point Cursor, Codex,
 Mistral Code, or another MCP client at the same endpoint. Client configuration
 syntax varies; use its Streamable HTTP MCP transport and the URL above.
 
-**Important:** the server has no authentication layer in this release. It binds
-to loopback by default. Do not expose it to a LAN, public interface, or the
-internet. Remote multi-user access requires authentication and authorization
-before changing the bind address.
+**Security boundary:** local Streamable HTTP remains unauthenticated and must stay on loopback. Do not expose it to a LAN, public interface, or the internet.
+
+For production PostgreSQL deployments, run one stdio server process per agent and set these environment variables:
+
+- `DATABASE_URL`: PostgreSQL connection string.
+- `COHORT_ORGANIZATION_ID`: organization UUID; the MCP branch registry is stored in that organization's schema.
+- `COHORT_MCP_AGENT_TOKEN`: agent credential created by the Cohort organization; its registered `agent_id` and scopes are loaded from PostgreSQL.
+- `COHORT_MCP_AGENT_ID` (optional): expected identity assertion; startup fails if it differs from the credential's registered agent.
+
+Production MCP mode authenticates the agent token, enforces its `workspace:read`, `workspace:write`, and `leases:write` scopes per tool, binds the process to the credential's registered agent identity, and enables lease enforcement. Each branch write must hold a lease for the key being changed. `lease_acquire` returns a monotonically increasing `fencing_token`; same-owner renewal extends expiry without changing the token, while takeover after expiry receives a higher token. Commits reject expired or superseded tokens. Event reads are filtered to the bound agent. `workspace_get_state` intentionally exposes the shared committed state to the connected agent because that is Cohort's coordination model.
 
 ## MCP tools
 
@@ -108,10 +114,7 @@ For coordination between multiple agents, use one shared Streamable HTTP server.
 
 ## Current scope and limitations
 
-- This release coordinates clients sharing one server process and one local
-  SQLite database on a single machine.
-- It is not a distributed multi-host coordination service.
-- The server serializes its own tool operations. Do not open the same database
-  from multiple independent server processes.
-- Leases are time-limited coordination primitives, not a security boundary.
-- The MCP endpoint is unauthenticated; keep it on loopback.
+- Local SQLite mode is intended for one server process on one machine.
+- Production PostgreSQL mode supports separate stdio server processes per agent, sharing the same organization schema; database transactions and fencing tokens coordinate their writes.
+- It is not a multi-region coordination service.
+- Local unauthenticated HTTP is for loopback development only. Production MCP identity is process-bound; remote authenticated HTTP transport is not enabled yet.

@@ -57,7 +57,7 @@ if _HOSTED and not DATABASE_URL:
     raise RuntimeError("DATABASE_URL is required on hosted deployments; refusing to start without authentication")
 if not DATABASE_URL:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-REQUIRE_LEASES = os.getenv("COHORT_REQUIRE_LEASES", "false").lower() in {"1", "true", "yes", "on"}
+REQUIRE_LEASES = os.getenv("COHORT_REQUIRE_LEASES", "true" if DATABASE_URL else "false").lower() in {"1", "true", "yes", "on"}
 workspace = (
     PostgresPersistentWorkspace(
         DATABASE_URL,
@@ -383,6 +383,9 @@ def write_branch(branch_id: str, body: BranchWrite, context: dict[str, Any] = De
         if not item or item["status"] != "open" or not _agent_owns(context, item["agent_id"]):
             raise HTTPException(404, "Open branch not found")
         try:
+            # PersistentWorkspace replays its runtime after lease mutations.
+            # Rebind the branch so writes validate against the current lease manager.
+            item["branch"]._lease_manager = workspace._workspace._lease_manager
             item["branch"].set(body.key, body.value, intent=body.intent)
             _save_api_branch(branch_id, item)
         except (LeaseError, ValueError) as exc:

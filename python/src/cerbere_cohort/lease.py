@@ -1,6 +1,7 @@
 # python/src/cerbere_cohort/lease.py
 import time
 import threading
+import math
 from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Dict, Optional, List
@@ -26,7 +27,7 @@ class Lease:
     fencing_token: int = 0
 
     def is_expired(self) -> bool:
-        return time.time() > self.expires_at
+        return time.time() >= self.expires_at
 
 class LeaseManager:
     """
@@ -64,6 +65,14 @@ class LeaseManager:
             LeaseError: ressource occupée (wait=False) ou timeout.
             DeadlockError: l'attente fermerait un cycle dans le graphe d'attente.
         """
+        if not isinstance(agent_id, str) or not agent_id.strip():
+            raise LeaseError('agent_id must not be empty', code='invalid_agent_id')
+        if not isinstance(resource_key, str) or not resource_key.strip():
+            raise LeaseError('resource_key must not be empty', code='invalid_resource_key')
+        if not isinstance(duration_seconds, (int, float)) or not math.isfinite(duration_seconds) or duration_seconds <= 0 or duration_seconds > 86400:
+            raise LeaseError('duration_seconds must be greater than 0 and at most 86400', code='invalid_lease_duration')
+        if not isinstance(timeout_seconds, (int, float)) or not math.isfinite(timeout_seconds) or timeout_seconds < 0:
+            raise LeaseError('timeout_seconds must be a finite non-negative number', code='invalid_lease_timeout')
         deadline = time.monotonic() + timeout_seconds
         try:
             while True:
@@ -76,6 +85,15 @@ class LeaseManager:
 
                     if existing.agent_id == agent_id:
                         existing.expires_at = time.time() + duration_seconds
+                        self._events.append(CerbereCohortEvent(
+                            agent_id=agent_id,
+                            action='lease.renew',
+                            payload={
+                                'resource_key': resource_key,
+                                'expires_at': existing.expires_at,
+                                'fencing_token': existing.fencing_token,
+                            },
+                        ))
                         return existing
 
                     if not wait:

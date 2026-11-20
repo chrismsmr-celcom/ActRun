@@ -39,3 +39,13 @@ def test_lease_counter_uses_greatest():
         "fencing_token = MAX(fencing_token, excluded.fencing_token)"
     )
     assert "GREATEST(cohort_lease_counters.fencing_token, EXCLUDED.fencing_token)" in sql
+
+
+def test_mcp_branch_registry_is_organization_scoped():
+    sql = _Connection._translate("CREATE TABLE IF NOT EXISTS mcp_branches (agent_id TEXT)", "cohort_org_123")
+    assert sql == "CREATE TABLE IF NOT EXISTS cohort_org_123.cohort_mcp_branches (agent_id TEXT)"
+
+
+def test_mcp_branch_registry_keeps_public_compatibility():
+    sql = _Connection._translate("SELECT * FROM mcp_branches")
+    assert sql == "SELECT * FROM cohort_mcp_branches"

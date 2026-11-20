@@ -9,6 +9,7 @@ import argparse
 import functools
 import json
 import os
+import math
 import threading
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,7 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.exceptions import ToolError
 
 from cerbere_cohort.errors import CerbereError
+from cerbere_cohort.auth import authenticate_agent_token, configure_membership_db
 from cerbere_cohort.persistence import PersistentWorkspace
 from cerbere_cohort.postgres import PostgresPersistentWorkspace
 from cerbere_cohort.workspace import Branch
@@ -54,20 +56,36 @@ def structured_tool_errors(fn):
     return wrapper
 
 
+class MCPAuthorizationError(CerbereError):
+    code = 'insufficient_scope'
+
+
 class CohortService:
     """Thread-safe MCP-facing facade over PersistentWorkspace."""
 
-    def __init__(self, db_path: str | Path | None = None):
+    def __init__(
+        self,
+        db_path: str | Path | None = None,
+        *,
+        authenticated_agent_id: str | None = None,
+        require_leases: bool | None = None,
+        organization_id: str | None = None,
+        agent_scopes: list[str] | None = None,
+    ):
         database_url = os.getenv('DATABASE_URL', '').strip()
+        self.authenticated_agent_id = (authenticated_agent_id or '').strip() or None
+        self.agent_scopes = set(agent_scopes) if agent_scopes is not None else None
+        if require_leases is None:
+            require_leases = os.getenv('COHORT_REQUIRE_LEASES', 'true' if database_url else 'false').lower() in {'1', 'true', 'yes', 'on'}
         if database_url.startswith(('postgres://', 'postgresql://')):
             self.db_path = None
-            self.workspace = PostgresPersistentWorkspace(database_url)
+            self.workspace = PostgresPersistentWorkspace(database_url, require_leases=require_leases, organization_id=organization_id)
         else:
             if db_path is None:
                 raise ValueError('Set DATABASE_URL or provide a local SQLite --db path')
             self.db_path = Path(db_path).expanduser()
             self.db_path.parent.mkdir(parents=True, exist_ok=True)
-            self.workspace = PersistentWorkspace(self.db_path)
+            self.workspace = PersistentWorkspace(self.db_path, require_leases=require_leases)
         self._db = self.workspace._conn
         self._lock = threading.RLock()
         self._db.execute(
@@ -78,10 +96,17 @@ class CohortService:
                 base_version TEXT NOT NULL,
                 current_data_json TEXT NOT NULL,
                 intents_json TEXT NOT NULL,
+                fencing_tokens_json TEXT NOT NULL DEFAULT '{}',
                 PRIMARY KEY (agent_id, branch_name)
             )
             """
         )
+        if self.db_path is not None:
+            columns = {row['name'] for row in self._db.execute('PRAGMA table_info(mcp_branches)')}
+            if 'fencing_tokens_json' not in columns:
+                self._db.execute("ALTER TABLE mcp_branches ADD COLUMN fencing_tokens_json TEXT NOT NULL DEFAULT '{}'")
+        else:
+            self._db.execute("ALTER TABLE mcp_branches ADD COLUMN IF NOT EXISTS fencing_tokens_json TEXT NOT NULL DEFAULT '{}'")
         self._db.commit()
         self._branches: dict[tuple[str, str], Branch] = {}
         self._restore_branches()
@@ -120,6 +145,7 @@ class CohortService:
                 )
                 branch.current_data = json.loads(row["current_data_json"])
                 branch.intents = json.loads(row["intents_json"])
+                branch.fencing_tokens = json.loads(row['fencing_tokens_json'] or '{}')
                 self._branches[key] = branch
             self._db.commit()
 
@@ -127,12 +153,13 @@ class CohortService:
         self._db.execute(
             """
             INSERT INTO mcp_branches
-                (agent_id, branch_name, base_version, current_data_json, intents_json)
-            VALUES (?, ?, ?, ?, ?)
+                (agent_id, branch_name, base_version, current_data_json, intents_json, fencing_tokens_json)
+            VALUES (?, ?, ?, ?, ?, ?)
             ON CONFLICT(agent_id, branch_name) DO UPDATE SET
                 base_version=excluded.base_version,
                 current_data_json=excluded.current_data_json,
-                intents_json=excluded.intents_json
+                intents_json=excluded.intents_json,
+                fencing_tokens_json=excluded.fencing_tokens_json
             """,
             (
                 agent_id,
@@ -140,11 +167,32 @@ class CohortService:
                 branch.base_version,
                 json.dumps(branch.current_data, ensure_ascii=False, sort_keys=True),
                 json.dumps(branch.intents, ensure_ascii=False, sort_keys=True),
+                json.dumps(branch.fencing_tokens, ensure_ascii=False, sort_keys=True),
             ),
         )
         self._db.commit()
 
+    def bind_agent_identity(self, agent_id: str, scopes: list[str]) -> None:
+        if not isinstance(agent_id, str) or not agent_id.strip():
+            raise ValueError('authenticated agent identity is missing')
+        self.authenticated_agent_id = agent_id
+        self.agent_scopes = set(scopes)
+
+    def _require_scope(self, scope: str) -> None:
+        if self.agent_scopes is not None and scope not in self.agent_scopes:
+            raise MCPAuthorizationError(
+                f'MCP agent credential lacks required scope: {scope}',
+                details={'required_scope': scope},
+            )
+
+    def _assert_agent(self, agent_id: str) -> None:
+        if not isinstance(agent_id, str) or not agent_id.strip():
+            raise ValueError('agent_id must not be empty')
+        if self.authenticated_agent_id and agent_id != self.authenticated_agent_id:
+            raise ValueError('agent_id does not match the identity bound to this MCP server')
+
     def _branch(self, agent_id: str, branch_name: str) -> Branch:
+        self._assert_agent(agent_id)
         try:
             return self._branches[(agent_id, branch_name)]
         except KeyError as exc:
@@ -154,6 +202,7 @@ class CohortService:
             ) from exc
 
     def get_state(self) -> dict[str, Any]:
+        self._require_scope('workspace:read')
         with self._lock:
             return {
                 "head_version": self.workspace.head.version_id,
@@ -161,6 +210,8 @@ class CohortService:
             }
 
     def create_branch(self, agent_id: str, branch_name: str) -> dict[str, str]:
+        self._require_scope('workspace:write')
+        self._assert_agent(agent_id)
         self._validate_identity(agent_id, branch_name)
         with self._lock:
             key = (agent_id, branch_name)
@@ -176,6 +227,7 @@ class CohortService:
             }
 
     def read_branch(self, agent_id: str, branch_name: str, key: str) -> dict[str, Any]:
+        self._require_scope('workspace:read')
         with self._lock:
             branch = self._branch(agent_id, branch_name)
             return {"key": key, "exists": key in branch.current_data, "value": branch.get(key)}
@@ -183,8 +235,13 @@ class CohortService:
     def write_branch(
         self, agent_id: str, branch_name: str, key: str, value: Any, intent: str | None = None
     ) -> dict[str, Any]:
+        self._require_scope('workspace:write')
+        self._assert_agent(agent_id)
         with self._lock:
             branch = self._branch(agent_id, branch_name)
+            # PersistentWorkspace replays state after each mutation; rebind the
+            # branch before checking its lease so it sees the current lease manager.
+            branch._lease_manager = self.workspace._workspace._lease_manager
             branch.set(key, value, intent=intent)
             self._persist_branch(agent_id, branch)
             return {"updated": True, "key": key, "branch_name": branch_name}
@@ -192,13 +249,18 @@ class CohortService:
     def delete_branch_key(
         self, agent_id: str, branch_name: str, key: str, intent: str | None = None
     ) -> dict[str, Any]:
+        self._require_scope('workspace:write')
+        self._assert_agent(agent_id)
         with self._lock:
             branch = self._branch(agent_id, branch_name)
+            branch._lease_manager = self.workspace._workspace._lease_manager
             branch.delete(key, intent=intent)
             self._persist_branch(agent_id, branch)
             return {"deleted": True, "key": key, "branch_name": branch_name}
 
     def commit_branch(self, agent_id: str, branch_name: str) -> dict[str, Any]:
+        self._require_scope('workspace:write')
+        self._assert_agent(agent_id)
         with self._lock:
             branch = self._branch(agent_id, branch_name)
             snapshot = self.workspace.commit(agent_id, branch)
@@ -213,6 +275,10 @@ class CohortService:
     def acquire_lease(
         self, agent_id: str, resource_key: str, duration_seconds: float = 30.0
     ) -> dict[str, Any]:
+        self._require_scope('leases:write')
+        self._assert_agent(agent_id)
+        if not isinstance(duration_seconds, (int, float)) or not math.isfinite(duration_seconds) or duration_seconds <= 0 or duration_seconds > 86400:
+            raise ValueError('duration_seconds must be greater than 0 and at most 86400')
         with self._lock:
             lease = self.workspace.acquire_lease(agent_id, resource_key, duration_seconds)
             return {
@@ -220,18 +286,25 @@ class CohortService:
                 "resource_key": resource_key,
                 "agent_id": agent_id,
                 "expires_at": lease.expires_at,
+                "fencing_token": lease.fencing_token,
             }
 
     def release_lease(self, agent_id: str, resource_key: str) -> dict[str, bool]:
+        self._require_scope('leases:write')
+        self._assert_agent(agent_id)
         with self._lock:
             self.workspace.release_lease(agent_id, resource_key)
             return {"released": True}
 
     def get_events(self, limit: int = 50) -> list[dict[str, Any]]:
+        self._require_scope('workspace:read')
         if limit < 1 or limit > 1000:
             raise ValueError("limit must be between 1 and 1000")
         with self._lock:
-            events = self.workspace.get_events()[-limit:]
+            events = self.workspace.get_events()
+            if self.authenticated_agent_id:
+                events = [event for event in events if event.agent_id == self.authenticated_agent_id]
+            events = events[-limit:]
             return [event.model_dump(mode="json") for event in events]
 
     @staticmethod
@@ -335,7 +408,25 @@ def main() -> None:
             "Authenticated remote MCP transport is not enabled yet. "
             "Use stdio; do not expose the shared production workspace over unauthenticated HTTP."
         )
-    service = CohortService(args.db)
+    database_url = os.getenv('DATABASE_URL', '').strip()
+    agent_token = os.getenv('COHORT_MCP_AGENT_TOKEN', '').strip()
+    if database_url and not agent_token:
+        raise RuntimeError('COHORT_MCP_AGENT_TOKEN is required for production MCP authentication')
+    organization_id = os.getenv('COHORT_ORGANIZATION_ID', '').strip() or None
+    if database_url and not organization_id:
+        raise RuntimeError('COHORT_ORGANIZATION_ID is required for production MCP schema isolation')
+    service = CohortService(
+        args.db,
+        organization_id=organization_id,
+        require_leases=True if database_url else None,
+    )
+    if database_url:
+        configure_membership_db(service._db)
+        principal = authenticate_agent_token(agent_token, organization_id)
+        expected_agent_id = os.getenv('COHORT_MCP_AGENT_ID', '').strip()
+        if expected_agent_id and expected_agent_id != principal['agent_id']:
+            raise RuntimeError('COHORT_MCP_AGENT_ID does not match the supplied agent credential')
+        service.bind_agent_identity(principal['agent_id'], principal['scopes'])
     mcp = create_server(service, host=args.host, port=args.port)
     if args.transport == "stdio":
         mcp.run(transport="stdio")
