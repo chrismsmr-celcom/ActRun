@@ -222,9 +222,20 @@ def require_workspace_scope(required_scope: str):
                 raise HTTPException(status_code=401, detail="Bearer access token required")
             bearer = authorization[7:].strip()
             if bearer.startswith("coh_"):
+                configured_org = _required_env("COHORT_ORGANIZATION_ID")
+                try:
+                    configured_org = str(UUID(configured_org))
+                except ValueError as exc:
+                    raise RuntimeError("COHORT_ORGANIZATION_ID must be a UUID") from exc
                 if not x_organization_id:
                     raise HTTPException(status_code=400, detail="X-Organization-ID header is required")
-                context = authenticate_agent_token(bearer, x_organization_id)
+                try:
+                    requested_org = str(UUID(x_organization_id))
+                except ValueError as exc:
+                    raise HTTPException(status_code=400, detail="X-Organization-ID must be a UUID") from exc
+                if requested_org != configured_org:
+                    raise HTTPException(status_code=403, detail="This Cohort deployment is not enabled for that organization")
+                context = authenticate_agent_token(bearer, requested_org)
                 if required_scope not in context["scopes"]:
                     raise HTTPException(status_code=403, detail="Agent credential lacks required scope")
             else:
