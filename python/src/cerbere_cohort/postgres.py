@@ -1,8 +1,13 @@
 """PostgreSQL adapter for Cohort's replay-verified persistence engine."""
 from __future__ import annotations
 
+import json
 import re
 import threading
+
+from .events import CerbereCohortEvent
+from .lease import Lease
+from .workspace import ContentStore
 
 from .persistence import PersistentWorkspace
 
@@ -190,3 +195,57 @@ class PostgresPersistentWorkspace(PersistentWorkspace):
             for statement in schema:
                 self._conn.execute(statement)
             self._conn.commit()
+
+
+    def _load_from_db(self):
+        """Reload persisted state using PostgreSQL SQL (never SQLite PRAGMA/rowid)."""
+        with self._lock:
+            self._persisted_ids.clear()
+            self._persisted_hashes.clear()
+            store = ContentStore()
+
+            for row in self._conn.execute(
+                "SELECT hash, content FROM objects"
+            ):
+                store.load_text(row["hash"], row["content"])
+                self._persisted_hashes.add(row["hash"])
+
+            events = []
+            for row in self._conn.execute(
+                "SELECT event_id, timestamp, agent_id, action, payload_json, metadata_json "
+                "FROM events ORDER BY seq"
+            ):
+                events.append(CerbereCohortEvent(
+                    event_id=row["event_id"],
+                    timestamp=row["timestamp"],
+                    agent_id=row["agent_id"],
+                    action=row["action"],
+                    payload=json.loads(row["payload_json"]),
+                    metadata=json.loads(row["metadata_json"]) if row["metadata_json"] else None,
+                ))
+                self._persisted_ids.add(row["event_id"])
+
+            self._workspace = self._workspace.replay(
+                events, store, require_leases=self.require_leases
+            )
+
+            for row in self._conn.execute(
+                "SELECT resource_key, fencing_token FROM lease_counters"
+            ):
+                self._workspace._lease_manager._fencing_counters[
+                    row["resource_key"]
+                ] = row["fencing_token"]
+
+            for row in self._conn.execute(
+                "SELECT resource_key, agent_id, expires_at, acquired_at, fencing_token FROM leases"
+            ):
+                lease = Lease(
+                    agent_id=row["agent_id"],
+                    resource_key=row["resource_key"],
+                    expires_at=row["expires_at"],
+                    acquired_at=row["acquired_at"],
+                    fencing_token=row["fencing_token"],
+                )
+                self._workspace._lease_manager._active_leases[
+                    row["resource_key"]
+                ] = lease
