@@ -1,6 +1,7 @@
 import pytest
 
 from cerbere_cohort.merge import ConflictError
+from cerbere_cohort.lease import LeaseError
 from mcp_server import CohortService
 
 
@@ -105,9 +106,9 @@ def test_mcp_rejects_commit_after_lease_takeover(tmp_path):
     service.acquire_lease("agent-a", "record/1", 30)
     service.write_branch("agent-a", "work", "record/1", {"value": "stale"})
     service.workspace.acquire_lease("agent-b", "record/1", 30)
-    with pytest.raises(Exception) as exc:
+    with pytest.raises(LeaseError) as exc:
         service.commit_branch("agent-a", "work")
-    assert getattr(exc.value, "code", None) == "lease_fenced"
+    assert exc.value.code == "lease_fenced"
     service.close()
 
 
