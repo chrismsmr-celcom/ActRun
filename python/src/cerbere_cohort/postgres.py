@@ -46,8 +46,7 @@ class _Connection:
         except ImportError as exc:
             raise RuntimeError("Install psycopg[binary]>=3.2 for PostgreSQL support") from exc
         self._psycopg = psycopg
-        if not re.fullmatch(r"[a-z][a-z0-9_]{0,62}", schema):
-            raise ValueError("Invalid PostgreSQL schema name")
+        self._validate_schema(schema)
         self._dsn = dsn
         self.schema = schema
         self._lock = threading.RLock()
@@ -55,6 +54,11 @@ class _Connection:
         self._db = self._connect()
         if self.schema != "public":
             self._db.execute(f'CREATE SCHEMA IF NOT EXISTS "{self.schema}"')
+
+    @staticmethod
+    def _validate_schema(schema: str) -> None:
+        if not re.fullmatch(r"[a-z][a-z0-9_]{0,62}", schema):
+            raise ValueError("Invalid PostgreSQL schema name")
 
     def _connect(self):
         # prepare_threshold=None keeps the connection compatible with PgBouncer
