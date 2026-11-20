@@ -676,3 +676,110 @@ def accept_organization_invitation(
     if not row:
         raise HTTPException(status_code=404, detail="Invitation is invalid, expired, revoked, or the account email is not confirmed")
     return {"accepted": True, "organization_id": str(row["organization_id"]), "role": row["role"]}
+
+
+AGENT_SCOPES = {
+    "workspace:read", "workspace:write", "leases:read", "leases:write"
+}
+
+
+class AgentCredentialCreate(BaseModel):
+    agent_id: str = Field(min_length=1, max_length=128)
+    name: str = Field(min_length=1, max_length=120)
+    scopes: list[str] = Field(
+        default_factory=lambda: ["workspace:read", "workspace:write", "leases:read", "leases:write"],
+        min_length=1,
+        max_length=4,
+    )
+    expires_in_days: int | None = Field(default=None, ge=1, le=365)
+
+    @field_validator("agent_id", "name")
+    @classmethod
+    def _trim_nonempty(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("Value cannot be blank")
+        return value
+
+    @field_validator("scopes")
+    @classmethod
+    def _valid_scopes(cls, value: list[str]) -> list[str]:
+        if len(value) != len(set(value)) or not set(value).issubset(AGENT_SCOPES):
+            raise ValueError("Scopes must be unique supported Cohort scopes")
+        return value
+
+
+def _agent_credentials_db():
+    if not DATABASE_URL:
+        raise HTTPException(status_code=503, detail="Agent credentials require PostgreSQL")
+    return workspace._conn
+
+
+@app.post("/api/agents/credentials", status_code=201)
+def create_agent_credential(
+    body: AgentCredentialCreate,
+    context: dict[str, Any] = Depends(require_workspace_member),
+):
+    _require_admin(context)
+    token = "coh_" + secrets.token_urlsafe(40)
+    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+    expires_at = (
+        datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(days=body.expires_in_days)
+        if body.expires_in_days is not None else None
+    )
+    try:
+        row = _agent_credentials_db().execute(
+            """INSERT INTO public.cohort_agent_credentials
+               (organization_id, agent_id, name, token_hash, scopes, created_by, expires_at)
+               VALUES (?, ?, ?, ?, ?, ?, ?)
+               RETURNING id, organization_id, agent_id, name, scopes, expires_at, created_at""",
+            (context["organization_id"], body.agent_id, body.name, token_hash,
+             body.scopes, context["user_id"], expires_at.isoformat() if expires_at else None),
+        ).fetchone()
+        workspace._conn.commit()
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Unable to create agent credential") from exc
+    return {
+        "id": str(row["id"]), "agent_id": row["agent_id"], "name": row["name"],
+        "scopes": list(row["scopes"]), "expires_at": row["expires_at"],
+        "created_at": row["created_at"], "token": token,
+    }
+
+
+@app.get("/api/agents/credentials")
+def list_agent_credentials(
+    context: dict[str, Any] = Depends(require_workspace_member),
+):
+    _require_admin(context)
+    rows = _agent_credentials_db().execute(
+        """SELECT id, agent_id, name, scopes, expires_at, last_used_at, revoked_at, created_at
+           FROM public.cohort_agent_credentials
+           WHERE organization_id = ? ORDER BY created_at DESC LIMIT 200""",
+        (context["organization_id"],),
+    ).fetchall()
+    return {"items": [
+        {
+            "id": str(row["id"]), "agent_id": row["agent_id"], "name": row["name"],
+            "scopes": list(row["scopes"]), "expires_at": row["expires_at"],
+            "last_used_at": row["last_used_at"], "revoked_at": row["revoked_at"],
+            "created_at": row["created_at"],
+        } for row in rows
+    ]}
+
+
+@app.delete("/api/agents/credentials/{credential_id}")
+def revoke_agent_credential(
+    credential_id: UUID,
+    context: dict[str, Any] = Depends(require_workspace_member),
+):
+    _require_admin(context)
+    row = _agent_credentials_db().execute(
+        """UPDATE public.cohort_agent_credentials SET revoked_at = now()
+           WHERE id = ? AND organization_id = ? AND revoked_at IS NULL
+           RETURNING id""",
+        (str(credential_id), context["organization_id"]),
+    ).fetchone()
+    workspace._conn.commit()
+    if not row:
+        raise HTTPException(status_code=404, detail="Active agent credential not found")
+    return {"revoked": True, "id": str(credential_id)}
