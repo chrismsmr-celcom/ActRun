@@ -57,7 +57,7 @@ if _HOSTED and not DATABASE_URL:
     raise RuntimeError("DATABASE_URL is required on hosted deployments; refusing to start without authentication")
 if not DATABASE_URL:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
-REQUIRE_LEASES = os.getenv("COHORT_REQUIRE_LEASES", "false").lower() in {"1", "true", "yes", "on"}
+REQUIRE_LEASES = os.getenv("COHORT_REQUIRE_LEASES", "true" if DATABASE_URL else "false").lower() in {"1", "true", "yes", "on"}
 workspace = (
     PostgresPersistentWorkspace(
         DATABASE_URL,
