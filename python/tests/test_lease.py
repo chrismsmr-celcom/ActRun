@@ -123,7 +123,8 @@ def test_expiry_boundary_is_inclusive():
 def test_same_owner_renews_lease_without_changing_fencing_token():
     lm = LeaseManager()
     first = lm.acquire("agent-a", "resource", duration_seconds=1)
+    original_expiry = first.expires_at
     renewed = lm.acquire("agent-a", "resource", duration_seconds=30)
     assert renewed.fencing_token == first.fencing_token
-    assert renewed.expires_at > first.expires_at
+    assert renewed.expires_at > original_expiry
     assert lm.get_events()[-1].action == "lease.renew"
