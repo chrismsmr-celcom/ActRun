@@ -6,6 +6,7 @@ import Topbar from "./components/Topbar";
 import CommandPalette from "./components/CommandPalette";
 import { CerbereDrawer, CreateBranchModal, DiffModal, EventInspector, PlansModal, ResolveModal, WriteModal } from "./components/modals";
 import { useCohort, useOptional } from "./lib/useCohort";
+import type { CohortWorkspace } from "./auth";
 import type { Branch, CerbereSummary, Tab } from "./lib/types";
 import type { Ctx } from "./pages/ctx";
 import Overview from "./pages/Overview";
@@ -26,7 +27,7 @@ const stored = <T extends string>(key: string, allowed: T[], fallback: T): T => 
 
 type Modalish = { kind: "create" } | { kind: "resolve"; branch: Branch } | { kind: "write"; branch: Branch } | { kind: "diff"; branch: Branch } | { kind: "plans" } | { kind: "cerbere" } | { kind: "palette" } | { kind: "inspector"; index: number } | null;
 
-function Shell({ userEmail, onSignOut }: { userEmail?: string; onSignOut?: () => void }) {
+function Shell({ userEmail, onSignOut, workspaces, activeWorkspace, onWorkspaceChange }: { userEmail?: string; onSignOut?: () => void; workspaces?: CohortWorkspace[]; activeWorkspace?: CohortWorkspace; onWorkspaceChange?: (id: string) => void }) {
   const toast = useToast();
   const { data, refresh } = useCohort();
   const cerbere = useOptional<CerbereSummary>("/cerbere/summary?window=24h", 60000);
@@ -66,7 +67,7 @@ function Shell({ userEmail, onSignOut }: { userEmail?: string; onSignOut?: () =>
     <div className="app-bg" aria-hidden /><div className="bg-noise" aria-hidden />
     <Sidebar tab={tab} onTab={(t) => go(t)} mode={mode} onMode={setMode} mobileOpen={mobileOpen} onCloseMobile={() => setMobileOpen(false)} dark={dark} onToggleDark={() => setDark(!dark)}
       openBranches={openBranches.length} conflicts={openBranches.filter((b) => b.conflicting_keys.length).length} blocked={cerbere.status === "ready" ? cerbere.data?.totals.blocked ?? null : null}
-      userEmail={userEmail} onSignOut={onSignOut} onCerbere={() => setModal({ kind: "cerbere" })} onPlans={() => setModal({ kind: "plans" })} />
+      userEmail={userEmail} onSignOut={onSignOut} workspaces={workspaces} activeWorkspace={activeWorkspace} onWorkspaceChange={onWorkspaceChange} onCerbere={() => setModal({ kind: "cerbere" })} onPlans={() => setModal({ kind: "plans" })} />
     <div className="main">
       <Topbar crumb={TABS[tab]} connected={data.connected} loaded={data.loaded} onSearch={() => setModal({ kind: "palette" })} onRefresh={() => void refresh()} onMenu={() => setMobileOpen(!mobileOpen)} />
       <main>
@@ -93,6 +94,6 @@ function Shell({ userEmail, onSignOut }: { userEmail?: string; onSignOut?: () =>
   </div>;
 }
 
-export default function Dashboard(props: { userEmail?: string; onSignOut?: () => void }) {
+export default function Dashboard(props: { userEmail?: string; onSignOut?: () => void; workspaces?: CohortWorkspace[]; activeWorkspace?: CohortWorkspace; onWorkspaceChange?: (id: string) => void }) {
   return <ToastProvider><Shell {...props} /></ToastProvider>;
 }
