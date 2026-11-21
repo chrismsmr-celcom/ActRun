@@ -20,6 +20,7 @@ from uuid import UUID
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 from cerbere_cohort.workspace import Branch
 from cerbere_cohort.telemetry import send_installation_ping
@@ -145,19 +146,21 @@ async def bind_workspace_runtime(request: Request, call_next):
     organization_id = request.headers.get("X-Organization-ID")
     authorization = request.headers.get("Authorization")
     runtime_token = None
-    if DATABASE_URL and organization_id:
-        if not authorization or not authorization.startswith("Bearer "):
-            raise HTTPException(status_code=401, detail="Bearer access token required")
-        bearer = authorization[7:].strip()
-        # Validate the tenant boundary before constructing or exposing its runtime.
-        if bearer.startswith("coh_"):
-            authenticate_agent_token(bearer, organization_id)
-        else:
-            require_workspace_member(authorization, organization_id)
-        runtime = get_runtime(organization_id)
-        runtime_token = set_current_runtime(runtime)
     try:
+        if DATABASE_URL and organization_id:
+            if not authorization or not authorization.startswith("Bearer "):
+                return JSONResponse(status_code=401, content={"detail": "Bearer access token required"})
+            bearer = authorization[7:].strip()
+            # Validate the tenant boundary before constructing or exposing its runtime.
+            if bearer.startswith("coh_"):
+                authenticate_agent_token(bearer, organization_id)
+            else:
+                require_workspace_member(authorization, organization_id)
+            runtime = get_runtime(organization_id)
+            runtime_token = set_current_runtime(runtime)
         return await call_next(request)
+    except HTTPException as exc:
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
     finally:
         if runtime_token is not None:
             reset_current_runtime(runtime_token)
