@@ -300,7 +300,7 @@ def list_user_workspaces(authorization: str | None = Header(default=None)):
     user_id = str(UUID(str(claims["sub"])))
     try:
         rows = _membership_connection.execute(
-            """SELECT o.id, o.name, m.role, m.status
+            """SELECT o.id, o.name, m.role, m.status, o.account_type, o.onboarding_completed_at
                FROM public.cohort_memberships m
                JOIN public.cohort_organizations o ON o.id = m.organization_id
                WHERE m.user_id = ? AND m.status = 'active'
@@ -310,7 +310,9 @@ def list_user_workspaces(authorization: str | None = Header(default=None)):
     except Exception as exc:
         raise HTTPException(status_code=503, detail="Unable to list workspace memberships") from exc
     return {"items": [
-        {"id": str(row["id"]), "name": row["name"], "role": row["role"]}
+        {"id": str(row["id"]), "name": row["name"], "role": row["role"],
+         "account_type": row["account_type"],
+         "onboarding_completed": row["onboarding_completed_at"] is not None}
         for row in rows
     ]}
 
