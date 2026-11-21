@@ -1,5 +1,5 @@
 -- Cohort organization membership bootstrap.
--- Apply in Supabase SQL Editor before enabling COHORT_ORGANIZATION_ID.
+-- Apply in Supabase SQL Editor before enabling multi-tenant workspace access.
 CREATE TABLE IF NOT EXISTS public.cohort_organizations (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     name TEXT NOT NULL,

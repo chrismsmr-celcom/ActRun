@@ -1,8 +1,7 @@
-"""HTTP adapter for the Cohort runtime.
+"""HTTP adapter for Cohort with request-scoped, schema-isolated workspaces.
 
-Workspace state and branch working copies are persisted in the configured
-database. Until organization-scoped access and cross-instance branch locking
-are implemented, deploy this API as a single instance.
+Each authenticated request selects a workspace through X-Organization-ID;
+membership is verified before its isolated runtime is bound to the request.
 """
 from __future__ import annotations
 
@@ -18,14 +17,16 @@ from pathlib import Path
 from typing import Any, Literal
 from uuid import UUID
 
-from fastapi import Depends, FastAPI, Header, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, field_validator
 from cerbere_cohort.workspace import Branch
 from cerbere_cohort.telemetry import send_installation_ping
 from cerbere_cohort.auth import (
     configure_membership_db,
     require_workspace_member,
+    authenticate_agent_token,
     _decode_access_token,
     require_workspace_read_access,
     require_workspace_write_access,
@@ -42,14 +43,13 @@ from cerbere_cohort import (
     Resolution,
 )
 from cerbere_cohort.persistence import PersistentWorkspace
-from cerbere_cohort.postgres import PostgresPersistentWorkspace
 
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 DB_PATH = Path(os.getenv("COHORT_DB_PATH", "./data/cohort.db"))
 if DATABASE_URL and not DATABASE_URL.startswith(("postgres://", "postgresql://")):
     raise RuntimeError("DATABASE_URL must be a PostgreSQL connection URL")
-if DATABASE_URL and (not os.getenv("SUPABASE_URL") or not os.getenv("COHORT_ORGANIZATION_ID")):
-    raise RuntimeError("SUPABASE_URL and COHORT_ORGANIZATION_ID are required in production")
+if DATABASE_URL and not os.getenv("SUPABASE_URL"):
+    raise RuntimeError("SUPABASE_URL is required in production")
 # Fail closed: without DATABASE_URL the API runs in the unauthenticated local
 # development mode. Never let a hosted deployment fall into it by accident.
 _HOSTED = bool(os.getenv("RENDER") or os.getenv("COHORT_ENV", "").lower() == "production")
@@ -58,22 +58,26 @@ if _HOSTED and not DATABASE_URL:
 if not DATABASE_URL:
     DB_PATH.parent.mkdir(parents=True, exist_ok=True)
 REQUIRE_LEASES = os.getenv("COHORT_REQUIRE_LEASES", "true" if DATABASE_URL else "false").lower() in {"1", "true", "yes", "on"}
-workspace = (
-    PostgresPersistentWorkspace(
-        DATABASE_URL,
-        require_leases=REQUIRE_LEASES,
-        organization_id=os.getenv("COHORT_ORGANIZATION_ID"),
-    )
-    if DATABASE_URL.startswith(("postgres://", "postgresql://"))
-    else PersistentWorkspace(DB_PATH, require_leases=REQUIRE_LEASES)
-)
-workspace._workspace._require_leases = REQUIRE_LEASES
-# Membership authorization shares the runtime's reconnecting, thread-safe DB
-# adapter instead of opening a fresh PostgreSQL connection per HTTP request.
 if DATABASE_URL:
-    configure_membership_db(workspace._conn)
-_lock = threading.RLock()
-_branches: dict[str, dict[str, Any]] = {}
+    from cerbere_cohort.postgres import _Connection
+    from cerbere_cohort.tenant_runtime import (
+        WorkspaceProxy, BranchesProxy, LockProxy, get_runtime, set_current_runtime, reset_current_runtime,
+    )
+    import cerbere_cohort.tenant_runtime as _tenant_runtime
+    _tenant_runtime.DATABASE_URL = DATABASE_URL
+    _tenant_runtime.REQUIRE_LEASES = REQUIRE_LEASES
+    _membership_connection = _Connection(DATABASE_URL, schema="public")
+    configure_membership_db(_membership_connection)
+    workspace = WorkspaceProxy()
+    _branches = BranchesProxy()
+    _lock = LockProxy()
+else:
+    DB_PATH.parent.mkdir(parents=True, exist_ok=True)
+    workspace = PersistentWorkspace(DB_PATH, require_leases=REQUIRE_LEASES)
+    workspace._workspace._require_leases = REQUIRE_LEASES
+    _membership_connection = workspace._conn
+    _branches: dict[str, dict[str, Any]] = {}
+    _lock = threading.RLock()
 
 def _ensure_api_branches_schema(conn, *, postgres: bool) -> None:
     """Create the API branch registry and safely upgrade pre-fencing schemas."""
@@ -98,7 +102,8 @@ def _ensure_api_branches_schema(conn, *, postgres: bool) -> None:
     conn.commit()
 
 
-_ensure_api_branches_schema(workspace._conn, postgres=bool(DATABASE_URL))
+if not DATABASE_URL:
+    _ensure_api_branches_schema(workspace._conn, postgres=False)
 
 def _save_api_branch(branch_id: str, item: dict[str, Any]) -> None:
     b = item['branch']
@@ -125,9 +130,62 @@ def _restore_api_branches() -> None:
         _branches[row['branch_id']] = {'branch': b, 'agent_id': row['agent_id'], 'status': row['status'], 'conflicting_keys': json.loads(row['conflicting_keys_json']), 'created_at': row['created_at']}
     workspace._conn.commit()
 
-_restore_api_branches()
+if not DATABASE_URL:
+    _restore_api_branches()
 
 app = FastAPI(title="Cerbere Cohort API", version="0.1.0")
+
+@app.middleware("http")
+async def bind_workspace_runtime(request: Request, call_next):
+    """Bind the verified tenant runtime for the lifetime of each HTTP request."""
+    organization_id = request.headers.get("X-Organization-ID")
+    authorization = request.headers.get("Authorization")
+    runtime_token = None
+    try:
+        if DATABASE_URL and organization_id:
+            if not authorization or not authorization.startswith("Bearer "):
+                return JSONResponse(status_code=401, content={"detail": "Bearer access token required"})
+            bearer = authorization[7:].strip()
+            # Validate the tenant boundary before constructing or exposing its runtime.
+            if bearer.startswith("coh_"):
+                authenticate_agent_token(bearer, organization_id)
+            else:
+                require_workspace_member(authorization, organization_id)
+            runtime = get_runtime(organization_id)
+            runtime_token = set_current_runtime(runtime)
+        return await call_next(request)
+    except HTTPException as exc:
+        return JSONResponse(status_code=exc.status_code, content={"detail": exc.detail})
+    finally:
+        if runtime_token is not None:
+            reset_current_runtime(runtime_token)
+
+
+
+@app.get("/api/workspaces")
+def list_user_workspaces(authorization: str | None = Header(default=None)):
+    """List workspaces for the authenticated identity; no active workspace is assumed."""
+    if not DATABASE_URL:
+        return {"items": [{"id": "local", "name": "Local workspace", "role": "owner"}]}
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Bearer access token required")
+    claims = _decode_access_token(authorization[7:].strip())
+    user_id = str(UUID(str(claims["sub"])))
+    try:
+        rows = _membership_connection.execute(
+            """SELECT o.id, o.name, m.role, m.status
+               FROM public.cohort_memberships m
+               JOIN public.cohort_organizations o ON o.id = m.organization_id
+               WHERE m.user_id = ? AND m.status = 'active'
+               ORDER BY o.created_at ASC""",
+            (user_id,),
+        ).fetchall()
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Unable to list workspace memberships") from exc
+    return {"items": [
+        {"id": str(row["id"]), "name": row["name"], "role": row["role"]}
+        for row in rows
+    ]}
 
 
 def _telemetry_collector_enabled() -> bool:
@@ -139,14 +197,14 @@ def startup_optional_telemetry():
     if _telemetry_collector_enabled():
         if not DATABASE_URL:
             raise RuntimeError("Telemetry collection requires PostgreSQL DATABASE_URL")
-        workspace._conn.execute("""CREATE TABLE IF NOT EXISTS cohort_telemetry_installations (
+        _membership_connection.execute("""CREATE TABLE IF NOT EXISTS cohort_telemetry_installations (
             installation_id TEXT PRIMARY KEY,
             version TEXT NOT NULL,
             deployment_type TEXT NOT NULL,
             first_seen TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
             last_seen TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
         )""")
-        workspace._conn.commit()
+        _membership_connection.commit()
     if os.getenv("COHORT_TELEMETRY", "false").lower() in {"1", "true", "yes", "on"}:
         threading.Thread(target=send_installation_ping, daemon=True, name="cohort-telemetry").start()
 origins = [x.strip() for x in os.getenv("COHORT_CORS_ORIGINS", "*").split(",") if x.strip()]
@@ -264,12 +322,12 @@ def get_traction_metrics():
     """Return aggregate opt-in installation counts to authenticated workspace members."""
     if not _telemetry_collector_enabled() or not DATABASE_URL:
         raise HTTPException(status_code=404, detail="Traction telemetry is not enabled")
-    row = workspace._conn.execute(
+    row = _membership_connection.execute(
         """SELECT COUNT(*) AS total_installations,
                   COUNT(*) FILTER (WHERE last_seen >= CURRENT_TIMESTAMP - INTERVAL '30 days') AS active_30d
            FROM cohort_telemetry_installations"""
     ).fetchone()
-    versions = workspace._conn.execute(
+    versions = _membership_connection.execute(
         """SELECT version, COUNT(*) AS installations
            FROM cohort_telemetry_installations GROUP BY version ORDER BY installations DESC"""
     ).fetchall()

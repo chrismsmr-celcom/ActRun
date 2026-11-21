@@ -1,8 +1,8 @@
-"""Supabase JWT authentication and single-organization authorization.
+"""Supabase identity authentication and workspace-scoped authorization.
 
-Production is deliberately single-tenant until every runtime table and MCP
-operation has organization-scoped storage. This fail-closed boundary prevents
-one customer's token from reading another customer's shared workspace.
+A user identity is global; workspace access is resolved independently for each
+request through an active membership. Runtime data must be resolved using the
+returned organization_id before a handler accesses it.
 """
 from __future__ import annotations
 
@@ -96,16 +96,10 @@ def require_workspace_member(
     authorization: str | None = Header(default=None),
     x_organization_id: str | None = Header(default=None, alias="X-Organization-ID"),
 ) -> dict[str, Any]:
-    """Authenticate user and authorize membership in the configured tenant."""
+    """Authenticate a user and authorize membership in the requested workspace."""
     # Local SQLite mode remains convenient for development and unit tests.
     if not os.getenv("DATABASE_URL", "").strip():
         return {"user_id": "local", "organization_id": "local", "role": "owner"}
-
-    configured_org = _required_env("COHORT_ORGANIZATION_ID")
-    try:
-        configured_org = str(UUID(configured_org))
-    except ValueError as exc:
-        raise RuntimeError("COHORT_ORGANIZATION_ID must be a UUID") from exc
 
     if not x_organization_id:
         raise HTTPException(status_code=400, detail="X-Organization-ID header is required")
@@ -113,11 +107,6 @@ def require_workspace_member(
         requested_org = str(UUID(x_organization_id))
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="X-Organization-ID must be a UUID") from exc
-
-    # Fail closed: current runtime state is global, so this release only allows
-    # one explicitly configured organization. Additional tenants are rejected.
-    if requested_org != configured_org:
-        raise HTTPException(status_code=403, detail="This Cohort deployment is not enabled for that organization")
 
     if not authorization or not authorization.startswith("Bearer "):
         raise HTTPException(status_code=401, detail="Bearer access token required")
@@ -222,19 +211,12 @@ def require_workspace_scope(required_scope: str):
                 raise HTTPException(status_code=401, detail="Bearer access token required")
             bearer = authorization[7:].strip()
             if bearer.startswith("coh_"):
-                configured_org = _required_env("COHORT_ORGANIZATION_ID")
-                try:
-                    configured_org = str(UUID(configured_org))
-                except ValueError as exc:
-                    raise RuntimeError("COHORT_ORGANIZATION_ID must be a UUID") from exc
                 if not x_organization_id:
                     raise HTTPException(status_code=400, detail="X-Organization-ID header is required")
                 try:
                     requested_org = str(UUID(x_organization_id))
                 except ValueError as exc:
                     raise HTTPException(status_code=400, detail="X-Organization-ID must be a UUID") from exc
-                if requested_org != configured_org:
-                    raise HTTPException(status_code=403, detail="This Cohort deployment is not enabled for that organization")
                 context = authenticate_agent_token(bearer, requested_org)
                 if required_scope not in context["scopes"]:
                     raise HTTPException(status_code=403, detail="Agent credential lacks required scope")
