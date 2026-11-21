@@ -167,6 +167,32 @@ async def bind_workspace_runtime(request: Request, call_next):
 
 
 
+@app.get("/api/workspaces")
+def list_user_workspaces(authorization: str | None = Header(default=None)):
+    """List workspaces for the authenticated identity; no active workspace is assumed."""
+    if not DATABASE_URL:
+        return {"items": [{"id": "local", "name": "Local workspace", "role": "owner"}]}
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Bearer access token required")
+    claims = _decode_access_token(authorization[7:].strip())
+    user_id = str(UUID(str(claims["sub"])))
+    try:
+        rows = _membership_connection.execute(
+            """SELECT o.id, o.name, m.role, m.status
+               FROM public.cohort_memberships m
+               JOIN public.cohort_organizations o ON o.id = m.organization_id
+               WHERE m.user_id = ? AND m.status = 'active'
+               ORDER BY o.created_at ASC""",
+            (user_id,),
+        ).fetchall()
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail="Unable to list workspace memberships") from exc
+    return {"items": [
+        {"id": str(row["id"]), "name": row["name"], "role": row["role"]}
+        for row in rows
+    ]}
+
+
 def _telemetry_collector_enabled() -> bool:
     return os.getenv("COHORT_TELEMETRY_COLLECTOR_ENABLED", "false").lower() in {"1", "true", "yes", "on"}
 
