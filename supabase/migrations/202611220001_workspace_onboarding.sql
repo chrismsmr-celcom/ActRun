@@ -23,6 +23,12 @@ CREATE TABLE IF NOT EXISTS public.cohort_user_profiles (
 ALTER TABLE public.cohort_user_profiles ENABLE ROW LEVEL SECURITY;
 REVOKE ALL ON public.cohort_user_profiles FROM anon, authenticated;
 
+-- Existing workspaces predate the onboarding flow; do not block invited members
+-- from accessing them. New signup-trigger workspaces keep NULL until onboarding.
+UPDATE public.cohort_organizations
+SET onboarding_completed_at = created_at
+WHERE onboarding_completed_at IS NULL;
+
 CREATE INDEX IF NOT EXISTS idx_cohort_org_onboarding
     ON public.cohort_organizations(onboarding_completed_at);
 
