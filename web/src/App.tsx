@@ -5,7 +5,7 @@ import Dashboard from "./Dashboard";
 import "./styles/app.css";
 import cohortLogo from "./cohortLogo";
 import { authConfigured, authEnvironmentPresent, getActiveWorkspaceId, setActiveWorkspaceId, supabase, type CohortWorkspace } from "./auth";
-import { api, ApiError } from "./lib/api";
+import { api } from "./lib/api";
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
@@ -96,6 +96,7 @@ export default function App() {
 
   const activeWorkspace = workspaces.find((w) => w.id === workspaceId) || workspaces[0];
   return <Dashboard
+    key={activeWorkspace.id}
     userEmail={session.user.email ?? undefined}
     workspaces={workspaces}
     activeWorkspace={activeWorkspace}
