@@ -20,7 +20,7 @@ from uuid import UUID
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from cerbere_cohort.workspace import Branch
 from cerbere_cohort.telemetry import send_installation_ping
 from cerbere_cohort.auth import (
@@ -177,6 +177,12 @@ class WorkspaceOnboardingRequest(BaseModel):
     frameworks: list[Literal[
         "langchain", "crewai", "autogen", "openai_agents", "custom", "other"
     ]] = Field(default_factory=list, max_length=6)
+
+    @model_validator(mode="after")
+    def _require_company_size_for_organizations(self):
+        if self.account_type in {"team", "enterprise"} and not self.company_size:
+            raise ValueError("Company size is required for team and enterprise workspaces")
+        return self
 
     @field_validator("full_name", "workspace_name", "industry")
     @classmethod
