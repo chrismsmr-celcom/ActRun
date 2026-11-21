@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Cable, ChevronsUpDown, Database, Gauge, GitBranch, LayoutDashboard, Lightbulb, LogOut, Lock, Moon, PanelLeft, ScrollText, Settings, Sparkles, Sun, TrendingUp } from "lucide-react";
 import type { ReactNode } from "react";
 import type { Tab } from "../lib/types";
+import type { CohortWorkspace } from "../auth";
 import cohortLogo from "../cohortLogo";
 import cerbereIcon from "../assets/cerbere-ag.png";
 
@@ -28,7 +29,7 @@ function usePopover() {
 export default function Sidebar(props: {
   tab: Tab; onTab: (t: Tab) => void; mode: SidebarMode; onMode: (m: SidebarMode) => void; mobileOpen: boolean; onCloseMobile: () => void;
   dark: boolean; onToggleDark: () => void; openBranches: number; conflicts: number; blocked: number | null;
-  userEmail?: string; onSignOut?: () => void; onCerbere: () => void; onPlans: () => void;
+  userEmail?: string; onSignOut?: () => void; workspaces?: CohortWorkspace[]; activeWorkspace?: CohortWorkspace; onWorkspaceChange?: (id: string) => void; onCerbere: () => void; onPlans: () => void;
 }) {
   const { tab, onTab, mode } = props;
   const modePop = usePopover(); const accountPop = usePopover();
@@ -39,7 +40,7 @@ export default function Sidebar(props: {
   return <div className="side-slot" data-mode={mode} data-open={props.mobileOpen}>
     <aside className="side" aria-label="Primary">
       <div className="brand"><img src={cohortLogo} alt="" /><strong className="lbl">Cohort<span className="tag-beta">Beta</span></strong></div>
-      <div className="ws-pick"><div className="av">W</div><div className="lbl"><strong>Workspace</strong><small>main environment</small></div></div>
+      <div className="ws-pick"><div className="av">{(props.activeWorkspace?.name || "W").slice(0, 1).toUpperCase()}</div><div className="lbl" style={{ minWidth: 0, flex: 1 }}><strong>{props.activeWorkspace?.name || "Local workspace"}</strong><small>{props.activeWorkspace?.role || "Local mode"}</small></div>{props.workspaces && props.workspaces.length > 1 ? <select aria-label="Switch workspace" value={props.activeWorkspace?.id || ""} onChange={(e) => props.onWorkspaceChange?.(e.target.value)} style={{ width: 18, minWidth: 18, border: 0, background: "transparent", color: "var(--muted)" }}>{props.workspaces.map((w) => <option key={w.id} value={w.id}>{w.name}</option>)}</select> : null}</div>
       <nav className="nav-scroll">
         <div className="nav-group">Workspace</div>
         {item("overview", "Overview", <LayoutDashboard size={18} />)}
