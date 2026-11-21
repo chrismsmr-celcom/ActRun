@@ -45,6 +45,26 @@ export default function App() {
 
   useEffect(() => { if (session) void loadWorkspaces(); else { setWorkspaces([]); setWorkspaceId(""); } }, [session, loadWorkspaces]);
 
+  async function completeOnboarding(payload: OnboardingPayload) {
+    if (!supabase || !session) return;
+    setBusy(true); setMessage(null);
+    try {
+      const { error } = await supabase.auth.updateUser({
+        data: { full_name: payload.full_name, name: payload.full_name },
+      });
+      if (error) throw error;
+      await api("/onboarding", {
+        method: "POST",
+        body: JSON.stringify(payload),
+      });
+      await loadWorkspaces();
+    } catch (err) {
+      setMessage({ tone: "error", text: err instanceof Error ? err.message : "Unable to create your workspace." });
+    } finally {
+      setBusy(false);
+    }
+  }
+
   // Local development remains passwordless. Hosted deployments never fall back
   // to an unauthenticated dashboard.
   if (!authEnvironmentPresent && !apiConfigured) return <Dashboard />;
@@ -89,10 +109,16 @@ export default function App() {
       <button className="btn btn-secondary btn-lg btn-block" onClick={() => void supabase?.auth.signOut()}>Sign out</button>
     </AuthScreen>;
   }
-  if (workspaces.length === 0) return <AuthScreen title="No workspace membership" subtitle="Your identity is authenticated, but it is not an active member of any Cohort workspace. Ask a workspace owner for an invitation.">
-    <button className="btn btn-secondary btn-lg btn-block" onClick={() => void loadWorkspaces()}>Refresh memberships</button>
-    <button className="btn btn-secondary btn-lg btn-block" onClick={() => void supabase?.auth.signOut()}>Sign out</button>
-  </AuthScreen>;
+  const needsOnboarding = workspaces.length === 0
+    || (workspaces[0]?.role === "owner" && workspaces[0]?.onboarding_completed === false);
+  if (needsOnboarding) return <OnboardingScreen
+    initialName={String(session.user.user_metadata?.full_name || session.user.user_metadata?.name || "")}
+    email={session.user.email ?? ""}
+    busy={busy}
+    message={message}
+    onSubmit={completeOnboarding}
+    onSignOut={() => void supabase?.auth.signOut()}
+  />;
 
   const activeWorkspace = workspaces.find((w) => w.id === workspaceId) || workspaces[0];
   return <Dashboard
@@ -114,6 +140,124 @@ function AuthScreen({ title, subtitle, message, children }: { title: string; sub
         <div><h1>{title}</h1>{subtitle && <p>{subtitle}</p>}</div>
         {children}
         {message && <p role={message.tone === "error" ? "alert" : "status"} className={`notice ${message.tone === "error" ? "err" : ""}`}>{message.text}</p>}
+      </section>
+      <small className="muted" style={{ position: "relative", zIndex: 1 }}>Cohort by Cerbère · Coordination for AI agents</small>
+    </main>
+  );
+}
+
+
+type OnboardingPayload = {
+  full_name: string;
+  job_title: string;
+  account_type: "individual" | "team" | "enterprise";
+  workspace_name: string;
+  company_size: "" | "1-10" | "10-100" | "100+";
+  industry: string;
+  primary_use_case: "personal_projects" | "internal_automation" | "production_agents" | "customer_facing_agents" | "research";
+  expected_agents: "1-5" | "6-20" | "21-100" | "100+";
+  frameworks: string[];
+};
+
+function OnboardingScreen({ initialName, email, busy, message, onSubmit, onSignOut }: {
+  initialName: string;
+  email: string;
+  busy: boolean;
+  message: { text: string; tone: "info" | "error" } | null;
+  onSubmit: (payload: OnboardingPayload) => Promise<void>;
+  onSignOut: () => void;
+}) {
+  const [fullName, setFullName] = useState(initialName);
+  const [jobTitle, setJobTitle] = useState("");
+  const [accountType, setAccountType] = useState<OnboardingPayload["account_type"]>("individual");
+  const [workspaceName, setWorkspaceName] = useState("");
+  const [companySize, setCompanySize] = useState<OnboardingPayload["company_size"]>("");
+  const [industry, setIndustry] = useState("Software / Technology");
+  const [useCase, setUseCase] = useState<OnboardingPayload["primary_use_case"]>("production_agents");
+  const [expectedAgents, setExpectedAgents] = useState<OnboardingPayload["expected_agents"]>("1-5");
+  const [frameworks, setFrameworks] = useState<string[]>([]);
+  const frameworkOptions = [
+    ["langchain", "LangChain"], ["crewai", "CrewAI"], ["autogen", "AutoGen"],
+    ["openai_agents", "OpenAI Agents SDK"], ["custom", "Custom agents"], ["other", "Other"],
+  ];
+  function toggleFramework(value: string) {
+    setFrameworks((current) => current.includes(value)
+      ? current.filter((item) => item !== value)
+      : [...current, value]);
+  }
+  function submit(event: FormEvent) {
+    event.preventDefault();
+    void onSubmit({
+      full_name: fullName.trim(), job_title: jobTitle.trim(),
+      account_type: accountType, workspace_name: workspaceName.trim(),
+      company_size: accountType === "individual" ? "" : companySize,
+      industry: industry.trim(), primary_use_case: useCase,
+      expected_agents: expectedAgents, frameworks,
+    });
+  }
+  return (
+    <main className="auth-page onboarding-page">
+      <div className="app-bg" aria-hidden /><div className="bg-noise" aria-hidden />
+      <section className="auth-card onboarding-card">
+        <div className="row"><img src={cohortLogo} alt="" width={32} height={32} /><strong style={{ fontSize: 18, color: "var(--ink)" }}>Cohort</strong><span className="tag-beta">Beta</span></div>
+        <div><p className="onboarding-step">SET UP YOUR WORKSPACE · 1/1</p><h1>Let’s set up your Cohort</h1><p>Tell us a little about you and how you plan to coordinate your agents.</p></div>
+        <form onSubmit={submit} className="stack onboarding-form">
+          <div className="onboarding-section">
+            <h2>How will you use Cohort?</h2>
+            <div className="account-types">
+              {([
+                ["individual", "Individual", "Just me", "user-round"],
+                ["team", "Team", "A team or startup", "users"],
+                ["enterprise", "Enterprise", "A larger organization", "building-2"],
+              ] as const).map(([value, label, description]) => (
+                <button type="button" key={value} className={`account-type ${accountType === value ? "selected" : ""}`} aria-pressed={accountType === value} onClick={() => setAccountType(value)}>
+                  <strong>{label}</strong><span>{description}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+          <div className="onboarding-section">
+            <h2>About you</h2>
+            <label className="field">Full name<input required maxLength={120} autoComplete="name" value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="Your full name" /></label>
+            <label className="field">Your role <span className="muted">(optional)</span><input maxLength={120} value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} placeholder="e.g. Founder, CTO, Engineer" /></label>
+            <label className="field">Account email<input value={email} readOnly /></label>
+          </div>
+          <div className="onboarding-section">
+            <h2>{accountType === "individual" ? "Your workspace" : "Your organization"}</h2>
+            <label className="field">{accountType === "individual" ? "Workspace name" : "Organization name"}
+              <input required maxLength={120} value={workspaceName} onChange={(e) => setWorkspaceName(e.target.value)} placeholder={accountType === "individual" ? "e.g. My workspace" : "e.g. Acme Inc."} />
+            </label>
+            {accountType !== "individual" && <label className="field">Company size
+              <select required value={companySize} onChange={(e) => setCompanySize(e.target.value as OnboardingPayload["company_size"])}>
+                <option value="">Select company size</option><option value="1-10">1–10 employees</option><option value="10-100">10–100 employees</option><option value="100+">100+ employees</option>
+              </select>
+            </label>}
+            <label className="field">Industry
+              <select value={industry} onChange={(e) => setIndustry(e.target.value)}>
+                {["Software / Technology", "Financial Services", "Healthcare", "E-commerce", "Consulting", "Education", "Manufacturing", "Other"].map((item) => <option key={item}>{item}</option>)}
+              </select>
+            </label>
+          </div>
+          <div className="onboarding-section">
+            <h2>What are you building?</h2>
+            <label className="field">Primary use case
+              <select value={useCase} onChange={(e) => setUseCase(e.target.value as OnboardingPayload["primary_use_case"])}>
+                <option value="personal_projects">Personal projects</option><option value="internal_automation">Internal automation</option><option value="production_agents">Production AI agents</option><option value="customer_facing_agents">Customer-facing agents</option><option value="research">Research and experimentation</option>
+              </select>
+            </label>
+            <label className="field">How many agents do you expect to coordinate?
+              <select value={expectedAgents} onChange={(e) => setExpectedAgents(e.target.value as OnboardingPayload["expected_agents"])}>
+                <option value="1-5">1–5 agents</option><option value="6-20">6–20 agents</option><option value="21-100">21–100 agents</option><option value="100+">100+ agents</option>
+              </select>
+            </label>
+            <div className="field"><span>Frameworks you use <span className="muted">(select all that apply)</span></span>
+              <div className="framework-options">{frameworkOptions.map(([value, label]) => <label key={value}><input type="checkbox" checked={frameworks.includes(value)} onChange={() => toggleFramework(value)} />{label}</label>)}</div>
+            </div>
+          </div>
+          {message && <p role="alert" className="notice err">{message.text}</p>}
+          <button className="btn btn-primary btn-lg btn-block" disabled={busy || !fullName.trim() || !workspaceName.trim() || !industry.trim() || (accountType !== "individual" && !companySize)}>{busy ? "Creating your workspace…" : "Create workspace and continue"}</button>
+        </form>
+        <button className="btn btn-secondary btn-block" onClick={onSignOut}>Sign out</button>
       </section>
       <small className="muted" style={{ position: "relative", zIndex: 1 }}>Cohort by Cerbère · Coordination for AI agents</small>
     </main>
