@@ -152,7 +152,7 @@ type OnboardingPayload = {
   job_title: string;
   account_type: "individual" | "team" | "enterprise";
   workspace_name: string;
-  company_size: "" | "1-10" | "10-100" | "100+";
+  company_size: "1-10" | "10-100" | "100+" | null;
   industry: string;
   primary_use_case: "personal_projects" | "internal_automation" | "production_agents" | "customer_facing_agents" | "research";
   expected_agents: "1-5" | "6-20" | "21-100" | "100+";
@@ -190,7 +190,7 @@ function OnboardingScreen({ initialName, email, busy, message, onSubmit, onSignO
     void onSubmit({
       full_name: fullName.trim(), job_title: jobTitle.trim(),
       account_type: accountType, workspace_name: workspaceName.trim(),
-      company_size: accountType === "individual" ? "" : companySize,
+      company_size: accountType === "individual" ? null : companySize || null,
       industry: industry.trim(), primary_use_case: useCase,
       expected_agents: expectedAgents, frameworks,
     });
