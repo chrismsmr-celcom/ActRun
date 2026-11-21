@@ -148,12 +148,19 @@ class BranchesProxy:
 
 
 class LockProxy:
+    def __init__(self):
+        self._held = contextvars.ContextVar("cohort_held_tenant_locks", default=())
+
     def __enter__(self):
         lock = current_runtime().lock
         lock.acquire()
-        self._lock = lock
+        self._held.set(self._held.get() + (lock,))
         return self
 
     def __exit__(self, exc_type, exc, tb):
-        self._lock.release()
+        held = self._held.get()
+        if not held:
+            raise RuntimeError("Tenant lock released without being acquired")
+        self._held.set(held[:-1])
+        held[-1].release()
         return False
