@@ -171,7 +171,7 @@ function OnboardingScreen({ initialName, email, busy, message, onSubmit, onSignO
   const [jobTitle, setJobTitle] = useState("");
   const [accountType, setAccountType] = useState<OnboardingPayload["account_type"]>("individual");
   const [workspaceName, setWorkspaceName] = useState("");
-  const [companySize, setCompanySize] = useState<OnboardingPayload["company_size"]>("");
+  const [companySize, setCompanySize] = useState<"" | "1-10" | "10-100" | "100+">("");
   const [industry, setIndustry] = useState("Software / Technology");
   const [useCase, setUseCase] = useState<OnboardingPayload["primary_use_case"]>("production_agents");
   const [expectedAgents, setExpectedAgents] = useState<OnboardingPayload["expected_agents"]>("1-5");
@@ -228,7 +228,7 @@ function OnboardingScreen({ initialName, email, busy, message, onSubmit, onSignO
               <input required maxLength={120} value={workspaceName} onChange={(e) => setWorkspaceName(e.target.value)} placeholder={accountType === "individual" ? "e.g. My workspace" : "e.g. Acme Inc."} />
             </label>
             {accountType !== "individual" && <label className="field">Company size
-              <select required value={companySize} onChange={(e) => setCompanySize(e.target.value as OnboardingPayload["company_size"])}>
+              <select required value={companySize} onChange={(e) => setCompanySize(e.target.value as "" | "1-10" | "10-100" | "100+")}>
                 <option value="">Select company size</option><option value="1-10">1–10 employees</option><option value="10-100">10–100 employees</option><option value="100+">100+ employees</option>
               </select>
             </label>}
