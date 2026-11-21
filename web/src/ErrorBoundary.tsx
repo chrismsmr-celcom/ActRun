@@ -14,7 +14,7 @@ export default class ErrorBoundary extends Component<{ children: ReactNode }, St
       <main className="auth-page">
         <section className="auth-card">
           <div><h1>Something went wrong</h1><p>The dashboard hit an unexpected error. Your data is safe — reload to continue.</p></div>
-          <button className="button-primary auth-button" onClick={() => window.location.reload()}>Reload dashboard</button>
+          <button className="btn btn-primary btn-lg btn-block" onClick={() => window.location.reload()}>Reload dashboard</button>
         </section>
       </main>
     );

@@ -1,3 +1,3 @@
-const cohortLogo = new URL("../../docs/cohort logo.png", import.meta.url).href;
+import cohortLogo from "./assets/cohort-logo.png";
 
 export default cohortLogo;

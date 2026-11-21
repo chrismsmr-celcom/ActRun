@@ -1,6 +1,6 @@
-# Cerbere Cohort dashboard
+# Cohort dashboard
 
-React + Vite dashboard based on the Cohort control-plane mockup.
+React + Vite control plane for the Cohort runtime. Design system: Manrope + Roboto (self-hosted via @fontsource), 8-point spacing, opaque cards over a grid/grain background, light and dark themes.
 
 ## Run the dashboard locally
 
@@ -38,6 +38,25 @@ For a separately hosted API, configure `VITE_API_URL` at build time to the API o
 - `GET /api/events?limit=100`
 - `GET /api/leases`, `POST /api/leases`, `DELETE /api/leases/{key}?agent_id=...`
 - `GET /api/settings`
+
+## Endpoints the UI already expects (not implemented in the API yet)
+
+Each one is optional: on 404/405/501 the screen shows an honest "not connected" state, never sample data.
+
+| Screen | Request | Response |
+| --- | --- | --- |
+| Gateway | `GET /api/gateway/agents` | `{ items: { id, name, kind, status: "connected"\|"idle"\|"error"\|"disconnected", last_seen, endpoint?, version? }[] }` |
+| Gateway | `POST /api/gateway/agents` | body `{ name, kind, endpoint? }` → the created agent |
+| Performance | `GET /api/performance` | `{ window_seconds, api: { p50_ms, p95_ms, p99_ms, error_rate, requests_per_min }, series[], endpoints[], agents[], incidents[] }` |
+| Advisor | `GET /api/advisor` | `{ items: { id, severity: "info"\|"warning"\|"critical", title, detail, action?: { label, tab?, href? } }[] }` |
+| Cerbère AG | `GET /api/cerbere/summary?window=24h\|7d\|30d` | `{ window, totals: { blocked, flagged, allowed }, by_rule[], items: { id, timestamp, agent_id, decision, rule, target, reason }[] }` |
+| Update Plan | `GET /api/billing/plans`, `POST /api/billing/checkout` | `{ current?, plans: { id, name, description, price?, period?, features?, cta? }[] }` / `{ url }` |
+
+TypeScript contracts: `src/lib/types.ts`. Advisor also computes recommendations locally from live data, and Performance measures real request latency in the browser.
+
+## Navigation and shortcuts
+
+Hash routes (`#/branches`), `Ctrl/⌘ + K` or `/` for search, sidebar modes (expanded, expand on hover, collapsed) saved in `localStorage`.
 
 ## Important runtime limitations
 
