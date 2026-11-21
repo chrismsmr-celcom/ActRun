@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { API_BASE } from "../lib/api";
-import { organizationId, supabase } from "../auth";
+import { getActiveWorkspaceId, supabase } from "../auth";
 import { Card, Empty, Metric, PageHead, Skeleton } from "../components/ui";
 
 type Metrics = { self_hosted_installations_total: number; self_hosted_installations_active_30d: number; versions: { version: string; installations: number }[]; note: string };
@@ -13,7 +13,9 @@ export default function Traction() {
     let active = true;
     (async () => {
       try {
-        const headers: Record<string, string> = { "X-Organization-ID": organizationId };
+        const workspaceId = getActiveWorkspaceId();
+        if (!workspaceId) throw new Error("Select a workspace to load traction metrics.");
+        const headers: Record<string, string> = { "X-Organization-ID": workspaceId };
         if (supabase) { const { data } = await supabase.auth.getSession(); if (data.session?.access_token) headers.Authorization = "Bearer " + data.session.access_token; }
         const response = await fetch(API_BASE + "/api/traction", { headers }); const body = await response.json().catch(() => ({}));
         if (!response.ok) throw new Error(typeof body.detail === "string" ? body.detail : "Traction endpoint unavailable");

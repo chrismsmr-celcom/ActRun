@@ -1,4 +1,4 @@
-import { organizationId, supabase } from "../auth";
+import { getActiveWorkspaceId, supabase } from "../auth";
 
 const env = ((import.meta as any).env || {}) as Record<string, string | undefined>;
 export const API_BASE: string = env.VITE_API_BASE_URL || env.VITE_API_URL || "";
@@ -32,12 +32,15 @@ function record(sample: Sample) {
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
-    "X-Organization-ID": organizationId,
+    ...(path === "/workspaces" ? {} : (getActiveWorkspaceId() ? { "X-Organization-ID": getActiveWorkspaceId() } : {})),
     ...((init?.headers || {}) as Record<string, string>),
   };
   if (supabase) {
     const { data } = await supabase.auth.getSession();
     if (data.session?.access_token) headers.Authorization = `Bearer ${data.session.access_token}`;
+  }
+  if (path !== "/workspaces" && !getActiveWorkspaceId() && supabase) {
+    throw new ApiError("Select a workspace before using the Cohort runtime.", 400);
   }
   const controller = new AbortController();
   const timer = window.setTimeout(() => controller.abort(), 15000);

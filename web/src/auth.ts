@@ -14,6 +14,14 @@ export const supabase = supabaseUrl && supabaseAnonKey
     })
   : null;
 
-export const organizationId = (env.VITE_COHORT_ORGANIZATION_ID as string | undefined) || "";
-export const authConfigured = Boolean(supabase && organizationId);
+const ACTIVE_WORKSPACE_KEY = "cohort.active-workspace";
+
+export type CohortWorkspace = { id: string; name: string; role: string };
+export function getActiveWorkspaceId(): string {
+  try { return localStorage.getItem(ACTIVE_WORKSPACE_KEY) || ""; } catch { return ""; }
+}
+export function setActiveWorkspaceId(id: string) {
+  try { if (id) localStorage.setItem(ACTIVE_WORKSPACE_KEY, id); else localStorage.removeItem(ACTIVE_WORKSPACE_KEY); } catch { /* storage unavailable */ }
+}
+export const authConfigured = Boolean(supabase);
 export const authEnvironmentPresent = Boolean(supabaseUrl || supabaseAnonKey);
