@@ -13,6 +13,7 @@ export default function App() {
   const [email, setEmail] = useState("");
   const [busy, setBusy] = useState(false);
   const [sent, setSent] = useState(false);
+  const [authMode, setAuthMode] = useState<"signin" | "signup">("signin");
   const [message, setMessage] = useState<{ text: string; tone: "info" | "error" } | null>(null);
   const [workspaces, setWorkspaces] = useState<CohortWorkspace[]>([]);
   const [workspaceId, setWorkspaceId] = useState(getActiveWorkspaceId);
@@ -77,29 +78,26 @@ export default function App() {
       event.preventDefault();
       if (!supabase) return;
       setBusy(true); setMessage(null);
-      const { error } = await supabase.auth.signInWithOtp({ email: email.trim(), options: { emailRedirectTo: window.location.origin } });
+      const { error } = await supabase.auth.signInWithOtp({
+        email: email.trim(),
+        options: { emailRedirectTo: window.location.origin },
+      });
       if (error) setMessage({ tone: "error", text: error.message });
-      else { setSent(true); setMessage({ tone: "info", text: `We sent a sign-in link to ${email.trim()}. Check your inbox.` }); }
+      else { setSent(true); setMessage({ tone: "info", text: `We sent a secure link to ${email.trim()}. Check your inbox.` }); }
       setBusy(false);
     }
-    async function signInWithGoogle() {
+    async function signInWithProvider(provider: "google" | "github" | "gitlab") {
       if (!supabase) return;
       setBusy(true); setMessage(null);
-      const { error } = await supabase.auth.signInWithOAuth({ provider: "google", options: { redirectTo: window.location.origin } });
+      const { error } = await supabase.auth.signInWithOAuth({ provider, options: { redirectTo: window.location.origin } });
       if (error) { setMessage({ tone: "error", text: error.message }); setBusy(false); }
     }
-    return (
-      <AuthScreen title="Sign in to Cohort" subtitle="Sign in with the identity associated with your workspace membership." message={message}>
-        <form onSubmit={sendMagicLink} className="stack">
-          <label className="field">Work email
-            <input type="email" required autoComplete="email" autoFocus value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@company.com" />
-          </label>
-          <button className="btn btn-primary btn-lg btn-block" disabled={busy || !email.trim()}>{busy ? "Please wait…" : sent ? "Resend sign-in link" : "Email me a sign-in link"}</button>
-          <div className="divider"><span>or</span></div>
-          <button type="button" className="btn btn-secondary btn-lg btn-block" disabled={busy} onClick={() => void signInWithGoogle()}>Continue with Google</button>
-        </form>
-      </AuthScreen>
-    );
+    return <SplitAuthScreen mode={authMode} email={email} busy={busy} sent={sent} message={message}
+      onEmailChange={(value) => { setEmail(value); setSent(false); }}
+      onSubmit={sendMagicLink}
+      onProvider={(provider) => void signInWithProvider(provider)}
+      onModeChange={(mode) => { setAuthMode(mode); setMessage(null); setSent(false); }}
+    />;
   }
 
   if (workspaceLoading) return <AuthScreen title="Loading your workspaces…" />;
@@ -146,6 +144,69 @@ function AuthScreen({ title, subtitle, message, children }: { title: string; sub
   );
 }
 
+
+
+type AuthMode = "signin" | "signup";
+type OAuthProvider = "google" | "github" | "gitlab";
+
+function SplitAuthScreen({ mode, email, busy, sent, message, onEmailChange, onSubmit, onProvider, onModeChange }: {
+  mode: AuthMode; email: string; busy: boolean; sent: boolean;
+  message: { text: string; tone: "info" | "error" } | null;
+  onEmailChange: (value: string) => void; onSubmit: (event: FormEvent) => void;
+  onProvider: (provider: OAuthProvider) => void; onModeChange: (mode: AuthMode) => void;
+}) {
+  const isSignup = mode === "signup";
+  return (
+    <main className="split-auth-page">
+      <section className="split-auth-form"><div className="split-auth-inner">
+        <a className="auth-brand" href="/" aria-label="Cohort home">
+          <img src={cohortLogo} alt="" width={34} height={34} /><span>Cohort</span><span className="tag-beta">Beta</span>
+        </a>
+        <div className="auth-heading">
+          <p className="auth-eyebrow">{isSignup ? "GET STARTED" : "WELCOME BACK"}</p>
+          <h1>{isSignup ? "Create your account" : "Sign in to Cohort"}</h1>
+          <p>{isSignup ? "Start coordinating your AI agents." : "Access your workspace and keep your agents in sync."}</p>
+        </div>
+        <form onSubmit={onSubmit} className="split-auth-stack">
+          <label className="field">Work email
+            <input type="email" required autoComplete="email" autoFocus value={email}
+              onChange={(event) => onEmailChange(event.target.value)} placeholder="you@company.com" />
+          </label>
+          <button className="btn btn-primary btn-lg btn-block auth-email-submit" disabled={busy || !email.trim()}>
+            {busy ? "Please wait…" : sent ? "Resend secure link" : "Continue with email"}<span aria-hidden="true">→</span>
+          </button>
+        </form>
+        <div className="auth-divider"><span>OR CONTINUE WITH</span></div>
+        <div className="auth-provider-list">
+          <button type="button" className="auth-provider" disabled={busy} onClick={() => onProvider("google")}><span className="provider-mark google-mark">G</span><span>Continue with Google</span></button>
+          <button type="button" className="auth-provider" disabled={busy} onClick={() => onProvider("github")}><span className="provider-mark github-mark">⌘</span><span>Continue with GitHub</span></button>
+          <button type="button" className="auth-provider" disabled={busy} onClick={() => onProvider("gitlab")}><span className="provider-mark gitlab-mark">◆</span><span>Continue with GitLab</span></button>
+          <button type="button" className="auth-provider auth-provider-disabled" disabled aria-disabled="true" title="Azure SSO will be available soon">
+            <span className="provider-mark sso-mark">▦</span><span>Continue with SSO</span><span className="coming-soon">Soon</span>
+          </button>
+        </div>
+        {message && <p role={message.tone === "error" ? "alert" : "status"} className={`auth-feedback ${message.tone}`}>{message.text}</p>}
+        <p className="auth-switch">{isSignup ? "Already have an account?" : "Don't have an account?"}{" "}
+          <button type="button" onClick={() => onModeChange(isSignup ? "signin" : "signup")}>{isSignup ? "Sign in" : "Sign up"}</button>
+        </p>
+        <p className="auth-legal">By continuing, you agree to Cohort’s Terms of Service and Privacy Policy.</p>
+      </div></section>
+      <aside className="auth-art-panel" aria-label="Cohort animated blocks">
+        <div className="auth-art-glow" />
+        <div className="auth-art-copy"><div className="auth-art-kicker"><span /> MULTI-AGENT COORDINATION</div>
+          <h2>Independent agents.<br /><em>One coordinated system.</em></h2>
+          <p>Shared state. Clear ownership. Reliable execution.</p>
+        </div>
+        <div className="brick-stage" aria-hidden="true"><div className="brick-floor" /><div className="brick-stack">
+          <i className="brick b1" /><i className="brick b2" /><i className="brick b3" /><i className="brick b4" />
+          <i className="brick b5" /><i className="brick b6" /><i className="brick b7" /><i className="brick b8" />
+          <i className="brick b9" /><i className="brick b10" /><i className="brick b11" /><i className="brick b12" />
+        </div></div>
+        <div className="auth-art-footer"><span>COHORT BY CERBÈRE</span><span>BUILD WITH CONTROL.</span></div>
+      </aside>
+    </main>
+  );
+}
 
 type OnboardingPayload = {
   full_name: string;
