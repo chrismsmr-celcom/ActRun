@@ -132,6 +132,34 @@ CREATE TRIGGER cohort_auth_user_workspace_bootstrap
     AFTER INSERT ON auth.users
     FOR EACH ROW EXECUTE FUNCTION public.cohort_provision_personal_workspace();
 
+-- Backfill existing accounts that predate automatic workspace provisioning.
+WITH users_without_workspace AS (
+    SELECT u.id, COALESCE(
+        NULLIF(split_part(COALESCE(u.email, ''), '@', 1), ''),
+        'Personal workspace'
+    ) AS workspace_name
+    FROM auth.users u
+    WHERE NOT EXISTS (
+        SELECT 1 FROM public.cohort_memberships m
+        WHERE m.user_id = u.id AND m.status = 'active'
+    )
+),
+created_workspaces AS (
+    INSERT INTO public.cohort_organizations(name)
+    SELECT workspace_name || '''s workspace'
+    FROM users_without_workspace
+    RETURNING id, name
+)
+INSERT INTO public.cohort_memberships(organization_id, user_id, role, status)
+SELECT w.id, u.id, 'owner', 'active'
+FROM created_workspaces w
+JOIN users_without_workspace u
+  ON w.name = u.workspace_name || '''s workspace'
+WHERE NOT EXISTS (
+    SELECT 1 FROM public.cohort_memberships m
+    WHERE m.user_id = u.id AND m.status = 'active'
+);
+
 ALTER TABLE public.cohort_roles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.cohort_role_permissions ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.cohort_audit_logs ENABLE ROW LEVEL SECURITY;
