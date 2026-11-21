@@ -162,6 +162,133 @@ async def bind_workspace_runtime(request: Request, call_next):
 
 
 
+class WorkspaceOnboardingRequest(BaseModel):
+    full_name: str = Field(min_length=1, max_length=120)
+    job_title: str | None = Field(default=None, max_length=120)
+    account_type: Literal["individual", "team", "enterprise"]
+    workspace_name: str = Field(min_length=1, max_length=120)
+    company_size: Literal["1-10", "10-100", "100+"] | None = None
+    industry: str = Field(min_length=1, max_length=80)
+    primary_use_case: Literal[
+        "personal_projects", "internal_automation", "production_agents",
+        "customer_facing_agents", "research"
+    ]
+    expected_agents: Literal["1-5", "6-20", "21-100", "100+"]
+    frameworks: list[Literal[
+        "langchain", "crewai", "autogen", "openai_agents", "custom", "other"
+    ]] = Field(default_factory=list, max_length=6)
+
+    @field_validator("full_name", "workspace_name", "industry")
+    @classmethod
+    def _trim_required_text(cls, value: str) -> str:
+        value = value.strip()
+        if not value:
+            raise ValueError("This field cannot be blank")
+        return value
+
+    @field_validator("job_title")
+    @classmethod
+    def _trim_optional_text(cls, value: str | None) -> str | None:
+        return value.strip()[:120] if value and value.strip() else None
+
+    @field_validator("frameworks")
+    @classmethod
+    def _unique_frameworks(cls, value: list[str]) -> list[str]:
+        if len(value) != len(set(value)):
+            raise ValueError("Framework selections must be unique")
+        return value
+
+
+@app.post("/api/onboarding", status_code=200)
+def complete_workspace_onboarding(
+    body: WorkspaceOnboardingRequest,
+    authorization: str | None = Header(default=None),
+):
+    """Create or complete the first owned workspace for the authenticated user."""
+    if not DATABASE_URL:
+        raise HTTPException(status_code=503, detail="Workspace onboarding requires PostgreSQL")
+    if not authorization or not authorization.startswith("Bearer "):
+        raise HTTPException(status_code=401, detail="Bearer access token required")
+    claims = _decode_access_token(authorization[7:].strip())
+    user_id = str(UUID(str(claims["sub"])))
+    email = str(claims.get("email", "")).strip().lower()
+
+    # A transaction + adapter advisory lock makes retries safe and prevents two
+    # simultaneous onboarding submissions from creating duplicate workspaces.
+    try:
+        _membership_connection.execute("BEGIN IMMEDIATE")
+        existing = _membership_connection.execute(
+            """SELECT o.id
+               FROM public.cohort_memberships m
+               JOIN public.cohort_organizations o ON o.id = m.organization_id
+               WHERE m.user_id = ? AND m.status = 'active' AND m.role = 'owner'
+               ORDER BY o.created_at ASC LIMIT 1""",
+            (user_id,),
+        ).fetchone()
+
+        if existing:
+            organization_id = str(existing["id"])
+            _membership_connection.execute(
+                """UPDATE public.cohort_organizations
+                   SET name = ?, account_type = ?, company_size = ?, industry = ?,
+                       primary_use_case = ?, expected_agents = ?, frameworks = ?,
+                       onboarding_completed_at = COALESCE(onboarding_completed_at, now())
+                   WHERE id = ?""",
+                (body.workspace_name, body.account_type,
+                 body.company_size if body.account_type != "individual" else None,
+                 body.industry, body.primary_use_case, body.expected_agents,
+                 body.frameworks, organization_id),
+            )
+        else:
+            created = _membership_connection.execute(
+                """INSERT INTO public.cohort_organizations
+                   (name, account_type, company_size, industry, primary_use_case,
+                    expected_agents, frameworks, onboarding_completed_at)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, now())
+                   RETURNING id""",
+                (body.workspace_name, body.account_type,
+                 body.company_size if body.account_type != "individual" else None,
+                 body.industry, body.primary_use_case, body.expected_agents,
+                 body.frameworks),
+            ).fetchone()
+            organization_id = str(created["id"])
+            _membership_connection.execute(
+                """INSERT INTO public.cohort_memberships
+                   (organization_id, user_id, role, status)
+                   VALUES (?, ?, 'owner', 'active')
+                   ON CONFLICT (organization_id, user_id)
+                   DO UPDATE SET role = 'owner', status = 'active'""",
+                (organization_id, user_id),
+            )
+
+        _membership_connection.execute(
+            """INSERT INTO public.cohort_user_profiles(user_id, full_name, job_title, updated_at)
+               VALUES (?, ?, ?, now())
+               ON CONFLICT (user_id) DO UPDATE SET
+                 full_name = EXCLUDED.full_name,
+                 job_title = EXCLUDED.job_title,
+                 updated_at = now()""",
+            (user_id, body.full_name, body.job_title),
+        )
+        _membership_connection.execute(
+            """INSERT INTO public.cohort_audit_logs
+               (organization_id, actor_user_id, action, target_type, target_id, metadata)
+               VALUES (?, ?, 'workspace.onboarding_completed', 'workspace', ?,
+                       jsonb_build_object('account_type', ?, 'email_domain', ?))""",
+            (organization_id, user_id, organization_id, body.account_type,
+             email.rsplit("@", 1)[-1] if "@" in email else None),
+        )
+        _membership_connection.commit()
+    except Exception as exc:
+        _membership_connection.rollback()
+        raise HTTPException(status_code=503, detail="Unable to complete workspace onboarding") from exc
+
+    return {"completed": True, "workspace": {
+        "id": organization_id, "name": body.workspace_name, "role": "owner",
+        "account_type": body.account_type,
+    }}
+
+
 @app.get("/api/workspaces")
 def list_user_workspaces(authorization: str | None = Header(default=None)):
     """List workspaces for the authenticated identity; no active workspace is assumed."""
