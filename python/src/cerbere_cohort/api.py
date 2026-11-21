@@ -43,7 +43,6 @@ from cerbere_cohort import (
     Resolution,
 )
 from cerbere_cohort.persistence import PersistentWorkspace
-from cerbere_cohort.postgres import PostgresPersistentWorkspace
 
 DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
 DB_PATH = Path(os.getenv("COHORT_DB_PATH", "./data/cohort.db"))
@@ -62,11 +61,8 @@ REQUIRE_LEASES = os.getenv("COHORT_REQUIRE_LEASES", "true" if DATABASE_URL else 
 if DATABASE_URL:
     from cerbere_cohort.postgres import _Connection
     from cerbere_cohort.tenant_runtime import (
-        DATABASE_URL as _TENANT_DATABASE_URL,
-        REQUIRE_LEASES as _TENANT_REQUIRE_LEASES,
         WorkspaceProxy, BranchesProxy, LockProxy, get_runtime, set_current_runtime, reset_current_runtime,
     )
-    _TENANT_DATABASE_URL = DATABASE_URL
     import cerbere_cohort.tenant_runtime as _tenant_runtime
     _tenant_runtime.DATABASE_URL = DATABASE_URL
     _tenant_runtime.REQUIRE_LEASES = REQUIRE_LEASES
