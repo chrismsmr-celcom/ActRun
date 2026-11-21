@@ -12,7 +12,6 @@ def test_local_development_bypasses_supabase(monkeypatch):
 
 def test_production_requires_organization_header(monkeypatch):
     monkeypatch.setenv("DATABASE_URL", "postgresql://example")
-    monkeypatch.setenv("COHORT_ORGANIZATION_ID", "11111111-1111-4111-8111-111111111111")
     try:
         require_workspace_member(authorization=None, x_organization_id=None)
     except HTTPException as exc:
@@ -22,18 +21,26 @@ def test_production_requires_organization_header(monkeypatch):
         raise AssertionError("Missing organization header must be rejected")
 
 
-def test_production_rejects_other_organization(monkeypatch):
+def test_user_can_access_any_workspace_with_active_membership(monkeypatch):
+    import cerbere_cohort.auth as auth
+
     monkeypatch.setenv("DATABASE_URL", "postgresql://example")
-    monkeypatch.setenv("COHORT_ORGANIZATION_ID", "11111111-1111-4111-8111-111111111111")
-    try:
-        require_workspace_member(
-            authorization="Bearer not-used",
-            x_organization_id="22222222-2222-4222-8222-222222222222",
-        )
-    except HTTPException as exc:
-        assert exc.status_code == 403
-    else:
-        raise AssertionError("A different organization must be rejected")
+    monkeypatch.delenv("COHORT_ORGANIZATION_ID", raising=False)
+    monkeypatch.setattr(auth, "_decode_access_token", lambda token: {
+        "sub": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "email": "owner@example.com"
+    })
+    monkeypatch.setattr(auth, "_membership_cache", {})
+    db = _FakeMembershipDB(role="member")
+    monkeypatch.setattr(auth, "_membership_db", db)
+
+    result = require_workspace_member(
+        authorization="Bearer valid-token",
+        x_organization_id="22222222-2222-4222-8222-222222222222",
+    )
+
+    assert result["organization_id"] == "22222222-2222-4222-8222-222222222222"
+    assert result["role"] == "member"
+    assert db.calls[0][1][0] == "22222222-2222-4222-8222-222222222222"
 
 
 def test_viewer_cannot_write():
