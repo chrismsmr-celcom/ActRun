@@ -140,6 +140,12 @@ class BranchesProxy:
     def items(self):
         return current_runtime().branches.items()
 
+    def get(self, key, default=None):
+        return current_runtime().branches.get(key, default)
+
+    def values(self):
+        return current_runtime().branches.values()
+
 
 class LockProxy:
     def __enter__(self):
