@@ -1,8 +1,7 @@
-"""HTTP adapter for the Cohort runtime.
+"""HTTP adapter for Cohort with request-scoped, schema-isolated workspaces.
 
-Workspace state and branch working copies are persisted in the configured
-database. Until organization-scoped access and cross-instance branch locking
-are implemented, deploy this API as a single instance.
+Each authenticated request selects a workspace through X-Organization-ID;
+membership is verified before its isolated runtime is bound to the request.
 """
 from __future__ import annotations
 
