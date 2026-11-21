@@ -1,5 +1,5 @@
 import { API_BASE } from "../lib/api";
-import { organizationId } from "../auth";
+import { getActiveWorkspaceId } from "../auth";
 import { Card, Disconnected, PageHead, Seg, Tag } from "../components/ui";
 import type { SidebarMode } from "../components/Sidebar";
 import type { Ctx } from "./ctx";
@@ -19,7 +19,7 @@ export default function Settings({ ctx, dark, setDark, mode, setMode }: { ctx: C
       <Card className="c6" title="Runtime capabilities" description="Features reported by the API adapter">
         <Line label="Multi-process coordination" value={s ? (s.multi_process ? "Enabled" : "Single process") : "—"} />
         <Line label="Authentication" value={s ? (s.authentication === "supabase" ? "Supabase JWT + membership checks" : "Not configured (development)") : "—"} />
-        <div style={{ padding: "16px 24px 24px" }}><div className="notice warn"><div className="grow"><strong>Deployment note</strong>This deployment serves one configured organization. Multi-organization isolation and authenticated remote MCP are not enabled yet.</div></div></div>
+        <div style={{ padding: "16px 24px 24px" }}><div className="notice warn"><div className="grow"><strong>Deployment note</strong>Workspace access is selected per signed-in user. Membership is checked by the API on each request.</div></div></div>
       </Card>
       <Card className="c6" title="Appearance" description="Saved in this browser">
         <div className="kv"><span>Theme</span><Seg label="Theme" value={dark ? "dark" : "light"} onChange={(v) => setDark(v === "dark")} options={[{ id: "light", label: "Light" }, { id: "dark", label: "Dark" }]} /></div>
@@ -27,7 +27,7 @@ export default function Settings({ ctx, dark, setDark, mode, setMode }: { ctx: C
       </Card>
       <Card className="c6" title="API connection" description="Set at build time with VITE_* variables">
         <Line label="API base URL" value={API_BASE || "Same origin (proxied to /api)"} />
-        <Line label="Organization ID" value={organizationId ? `${organizationId.slice(0, 8)}…` : "Not set"} />
+        <Line label="Active workspace ID" value={getActiveWorkspaceId() ? `${getActiveWorkspaceId().slice(0, 8)}…` : "Not selected"} />
         <div className="kv"><span>Status</span>{ctx.data.connected ? <Tag tone="ok">Connected</Tag> : <Tag tone="err">Offline</Tag>}</div>
       </Card>
     </div>
