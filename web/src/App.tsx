@@ -4,6 +4,7 @@ import type { Session } from "@supabase/supabase-js";
 import Dashboard from "./Dashboard";
 import "./styles/app.css";
 import cohortLogo from "./cohortLogo";
+import { GitHubLogo, GitLabLogo, GoogleLogo, SsoLogo } from "./components/ProviderLogos";
 import { authConfigured, authEnvironmentPresent, getActiveWorkspaceId, setActiveWorkspaceId, supabase, type CohortWorkspace } from "./auth";
 import { api } from "./lib/api";
 
@@ -178,11 +179,11 @@ function SplitAuthScreen({ mode, email, busy, sent, message, onEmailChange, onSu
         </form>
         <div className="auth-divider"><span>OR CONTINUE WITH</span></div>
         <div className="auth-provider-list">
-          <button type="button" className="auth-provider" disabled={busy} onClick={() => onProvider("google")}><span className="provider-mark google-mark">G</span><span>Continue with Google</span></button>
-          <button type="button" className="auth-provider" disabled={busy} onClick={() => onProvider("github")}><span className="provider-mark github-mark">⌘</span><span>Continue with GitHub</span></button>
-          <button type="button" className="auth-provider" disabled={busy} onClick={() => onProvider("gitlab")}><span className="provider-mark gitlab-mark">◆</span><span>Continue with GitLab</span></button>
-          <button type="button" className="auth-provider auth-provider-disabled" disabled aria-disabled="true" title="Azure SSO will be available soon">
-            <span className="provider-mark sso-mark">▦</span><span>Continue with SSO</span><span className="coming-soon">Soon</span>
+          <button type="button" className="auth-provider" aria-label="Continue with Google" disabled={busy} onClick={() => onProvider("google")}><GoogleLogo className="provider-logo" /><span>Google</span></button>
+          <button type="button" className="auth-provider" aria-label="Continue with GitHub" disabled={busy} onClick={() => onProvider("github")}><GitHubLogo className="provider-logo" /><span>GitHub</span></button>
+          <button type="button" className="auth-provider" aria-label="Continue with GitLab" disabled={busy} onClick={() => onProvider("gitlab")}><GitLabLogo className="provider-logo" /><span>GitLab</span></button>
+          <button type="button" className="auth-provider auth-provider-disabled" aria-label="Continue with SSO (coming soon)" disabled aria-disabled="true" title="Azure SSO will be available soon">
+            <SsoLogo className="provider-logo" /><span>SSO</span><span className="coming-soon">Soon</span>
           </button>
         </div>
         {message && <p role={message.tone === "error" ? "alert" : "status"} className={`auth-feedback ${message.tone}`}>{message.text}</p>}
