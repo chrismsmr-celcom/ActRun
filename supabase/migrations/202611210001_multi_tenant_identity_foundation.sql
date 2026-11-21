@@ -34,7 +34,7 @@ ALTER TABLE public.cohort_memberships
     ADD CONSTRAINT cohort_memberships_custom_role_fk
     FOREIGN KEY (custom_role_id, organization_id)
     REFERENCES public.cohort_roles(id, organization_id)
-    ON DELETE SET NULL;
+    ON DELETE NO ACTION;
 
 CREATE TABLE IF NOT EXISTS public.cohort_role_permissions (
     role_id UUID NOT NULL REFERENCES public.cohort_roles(id) ON DELETE CASCADE,
