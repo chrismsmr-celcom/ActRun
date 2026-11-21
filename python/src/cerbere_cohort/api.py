@@ -114,8 +114,7 @@ def _save_api_branch(branch_id: str, item: dict[str, Any]) -> None:
     workspace._conn.execute("INSERT INTO api_branches (branch_id, agent_id, branch_name, base_version, current_data_json, intents_json, fencing_tokens_json, status, conflicting_keys_json, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(branch_id) DO UPDATE SET current_data_json=excluded.current_data_json, intents_json=excluded.intents_json, fencing_tokens_json=excluded.fencing_tokens_json, status=excluded.status, conflicting_keys_json=excluded.conflicting_keys_json", (branch_id, item['agent_id'], b.name, b.base_version, json.dumps(b.current_data, ensure_ascii=False), json.dumps(b.intents, ensure_ascii=False), json.dumps(b.fencing_tokens, ensure_ascii=False), item['status'], json.dumps(item.get('conflicting_keys', [])), item['created_at']))
     workspace._conn.commit()
 
-def if not DATABASE_URL:
-    _restore_api_branches() -> None:
+def _restore_api_branches() -> None:
     committed = {
         (event.agent_id, event.payload.get('branch_name'))
         for event in workspace.get_events()
@@ -135,7 +134,8 @@ def if not DATABASE_URL:
         _branches[row['branch_id']] = {'branch': b, 'agent_id': row['agent_id'], 'status': row['status'], 'conflicting_keys': json.loads(row['conflicting_keys_json']), 'created_at': row['created_at']}
     workspace._conn.commit()
 
-_restore_api_branches()
+if not DATABASE_URL:
+    _restore_api_branches()
 
 app = FastAPI(title="Cerbere Cohort API", version="0.1.0")
 
